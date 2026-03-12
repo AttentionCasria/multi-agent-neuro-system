@@ -25,6 +25,7 @@ public class Tokeninterceptor implements HandlerInterceptor {
         // 打印请求中的 token（如果有）或 Authorization，便于排查前端 header 名称不一致问题
         String tokenHeader = request.getHeader("token");
         String authHeader = request.getHeader("Authorization");
+
         if (tokenHeader != null) log.debug("请求 token header: {}", tokenHeader);
         if (authHeader != null) log.debug("请求 Authorization header: {}", authHeader);
 

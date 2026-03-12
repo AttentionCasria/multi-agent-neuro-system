@@ -135,7 +135,11 @@ async function sendMessage() {
       )
     }
 
-    const { talkId, title } = finalResult.data || {}
+    const { talkId, title, content } = finalResult.data || {}
+
+    if (typeof content === 'string') {
+      currentTalkList.value[aiIndex] = content
+    }
 
     // ✅ 新对话真正生成 ID 后再更新
     if (currentTalkId.value === 0 && talkId) {
@@ -148,13 +152,23 @@ async function sendMessage() {
       } else {
         talkTitleList.value.unshift({ talkId, title })
       }
+    } else if (talkId) {
+      const index = talkTitleList.value.findIndex(t => t.talkId === talkId)
+      if (index !== -1 && title) {
+        talkTitleList.value[index] = {
+          ...talkTitleList.value[index],
+          title,
+        }
+      }
     }
+
+    await fetchTalkTitle()
 
   } catch (err) {
     console.error('发送失败', err)
     currentTalkList.value.splice(aiIndex, 1)
     currentTalkList.value.pop()
-    alert('发送失败')
+    alert(err?.message || '发送失败')
   } finally {
     isStreaming.value = false
     loading.value = false

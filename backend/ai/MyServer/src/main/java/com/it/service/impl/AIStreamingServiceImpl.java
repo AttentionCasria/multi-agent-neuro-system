@@ -1,7 +1,9 @@
 package com.it.service.impl;
 
+import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
@@ -21,9 +23,11 @@ import org.redisson.api.RateType;
 import org.redisson.api.RedissonClient;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -58,6 +62,8 @@ public class AIStreamingServiceImpl implements AIStreamingService {
 
     private static final String SEMAPHORE_KEY = "ai:concurrent";
     private static final int SEMAPHORE_PERMITS = 20;
+    private static final String DEFAULT_REPORT_MODE = "emergency";
+    private static final boolean DEFAULT_SHOW_THINKING = true;
 
     @PostConstruct
     public void init() {
@@ -161,6 +167,12 @@ public class AIStreamingServiceImpl implements AIStreamingService {
         if (userId == null) {
             return Flux.just(buildError("未登录"));
         }
+        if (StrUtil.isBlank(token)) {
+            return Flux.just(buildError("缺少登录令牌"));
+        }
+        if (!allowAICircuit()) {
+            return Flux.just(buildError("AI 服务当前不可用，请稍后重试"));
+        }
 
         // ========= 1️⃣ 自动创建对话 =========
         if (talkId == null || talkService.getById(talkId) == null) {
@@ -170,21 +182,27 @@ public class AIStreamingServiceImpl implements AIStreamingService {
 
         final Long finalTalkId = talkId;
 
-        // ========= 2️⃣ 构建上下文 =========
         String historyText = buildHistoryContext(userId, finalTalkId);
+        final String requestToken = token.trim();
+        final String reportMode = DEFAULT_REPORT_MODE;
+        final boolean showThinking = DEFAULT_SHOW_THINKING;
 
-        Map<String, Object> request = Map.of(
-                "question", question,
-                "round", 2,
-                "all_info", historyText,
-                "token", token
-        );
+        Map<String, Object> request = new HashMap<>();
+        request.put("question", question);
+        request.put("round", 2);
+        request.put("all_info", historyText);
+        request.put("token", requestToken);
+        request.put("report_mode", reportMode);
+        request.put("show_thinking", showThinking);
 
         StringBuilder fullAnswer = new StringBuilder();
         final String[] generatedTitle = {null};
+        final String[] updatedAllInfo = {historyText};
 
         return webClient.post()
                 .uri("/model/get_result")
+                .contentType(MediaType.APPLICATION_JSON)
+                .accept(MediaType.TEXT_PLAIN)
                 .bodyValue(request)
                 .retrieve()
                 .bodyToFlux(String.class)
@@ -197,48 +215,12 @@ public class AIStreamingServiceImpl implements AIStreamingService {
                 .filter(line -> !line.isEmpty())
                 .filter(line -> !"[DONE]".equalsIgnoreCase(line))
 
-                .flatMap(line -> {
-                    try {
-                        JsonNode json = objectMapper.readTree(line);
-
-                        // ====== 错误处理 ======
-                        if (json.has("error")) {
-                            return Flux.just(buildError(json.get("error").asText()));
-                        }
-
-                        // ====== 标题生成 ======
-                        if (json.has("name") && generatedTitle[0] == null) {
-                            generatedTitle[0] = json.get("name").asText();
-                            tryUpdateTalkTitle(finalTalkId, generatedTitle[0]);
-                        }
-
-                        // ====== 正文流 ======
-                        if (json.has("result")) {
-                            String chunk = json.get("result").asText();
-                            fullAnswer.append(chunk);
-
-                            Map<String, Object> resp = new HashMap<>();
-                            resp.put("type", "chunk");
-                            resp.put("talkId", finalTalkId.toString());
-                            resp.put("title", generatedTitle[0]);
-                            resp.put("content", chunk);
-
-                            return Flux.just(objectMapper.writeValueAsString(resp));
-                        }
-
-                        return Flux.empty();
-
-                    } catch (Exception e) {
-                        log.error("解析AI返回失败", e);
-                        return Flux.empty();
-                    }
-                }, 1)
+                .flatMap(line -> parseModelLine(line, finalTalkId, generatedTitle, updatedAllInfo, fullAnswer), 1)
 
                 .concatWith(Mono.fromCallable(() -> {
 
                     String finalTitle = generatedTitle[0];
-
-                    if (finalTitle == null || finalTitle.isBlank()) {
+                    if (StrUtil.isBlank(finalTitle)) {
                         finalTitle = buildTitleFromQuestion(question);
                         tryUpdateTalkTitle(finalTalkId, finalTitle);
                     }
@@ -262,41 +244,141 @@ public class AIStreamingServiceImpl implements AIStreamingService {
                     done.put("type", "done");
                     done.put("talkId", finalTalkId.toString());
                     done.put("title", finalTitle);
+                    done.put("name", finalTitle);
+                    done.put("all_info", updatedAllInfo[0]);
 
                     return objectMapper.writeValueAsString(done);
                 }))
 
-// ✅ 关键修复：发生异常也必须发 done
+                .onErrorResume(WebClientResponseException.class, e -> {
+                    log.error("调用 AI 服务失败: status={}, body={}", e.getStatusCode(), e.getResponseBodyAsString(), e);
+                    return buildErrorAndDone(finalTalkId, e.getStatusCode() + " " + e.getStatusText());
+                })
                 .onErrorResume(e -> {
                     log.error("流式生成异常", e);
-
-                    try {
-                        Map<String, Object> error = new HashMap<>();
-                        error.put("type", "error");
-                        error.put("talkId", finalTalkId.toString());
-                        error.put("message", e.getMessage() == null ? "AI 服务异常" : e.getMessage());
-
-                        Map<String, Object> done = new HashMap<>();
-                        done.put("type", "done");
-                        done.put("talkId", finalTalkId.toString());
-                        done.put("title", "异常结束");
-
-                        return Flux.just(
-                                objectMapper.writeValueAsString(error),
-                                objectMapper.writeValueAsString(done)
-                        );
-                    } catch (Exception ex) {
-                        return Flux.just("{\"type\":\"done\"}");
-                    }
+                    return buildErrorAndDone(finalTalkId, e.getMessage() == null ? "AI 服务异常" : e.getMessage());
                 })
 
                 .doFinally(signal -> log.info("流完成: signal={}", signal));
     }
+
+    private Flux<String> parseModelLine(String line,
+                                        Long talkId,
+                                        String[] generatedTitle,
+                                        String[] updatedAllInfo,
+                                        StringBuilder fullAnswer) {
+        try {
+            JsonNode json = objectMapper.readTree(line);
+
+            if (json.has("error")) {
+                return Flux.just(buildError(json.get("error").asText(), talkId));
+            }
+
+            if (json.has("name")) {
+                String title = json.get("name").asText();
+                if (StrUtil.isNotBlank(title)) {
+                    generatedTitle[0] = title;
+                    tryUpdateTalkTitle(talkId, title);
+                }
+            }
+
+            if (json.has("meta") && json.get("meta").has("all_info_update")) {
+                JsonNode allInfoNode = json.get("meta").get("all_info_update").get("all_info");
+                if (allInfoNode != null && !allInfoNode.isNull()) {
+                    updatedAllInfo[0] = allInfoNode.asText(updatedAllInfo[0]);
+                }
+            }
+
+            if (json.has("summary") || json.has("all_info")) {
+                updatedAllInfo[0] = json.path("all_info").asText(
+                        json.path("summary").asText(updatedAllInfo[0])
+                );
+            }
+
+            if ("done".equalsIgnoreCase(json.path("type").asText())) {
+                return Flux.empty();
+            }
+
+            List<String> events = new java.util.ArrayList<>();
+
+            if (json.has("thinking")) {
+                Map<String, Object> thinkingResp = baseResponse(talkId, generatedTitle[0], "thinking");
+                thinkingResp.put("thinking", objectMapper.convertValue(json.get("thinking"), new TypeReference<Map<String, Object>>() {}));
+                events.add(objectMapper.writeValueAsString(thinkingResp));
+            }
+
+            if (json.has("meta")) {
+                Map<String, Object> metaResp = baseResponse(talkId, generatedTitle[0], "meta");
+                metaResp.put("meta", objectMapper.convertValue(json.get("meta"), new TypeReference<Map<String, Object>>() {}));
+                events.add(objectMapper.writeValueAsString(metaResp));
+            }
+
+            if (json.has("result")) {
+                String chunk = json.get("result").asText();
+                fullAnswer.append(chunk);
+                Map<String, Object> chunkResp = baseResponse(talkId, generatedTitle[0], "chunk");
+                chunkResp.put("content", chunk);
+                events.add(objectMapper.writeValueAsString(chunkResp));
+            }
+
+            if (json.has("summary") || json.has("all_info")) {
+                Map<String, Object> summaryResp = baseResponse(talkId, generatedTitle[0], "summary");
+                summaryResp.put("summary", json.path("summary").asText(updatedAllInfo[0]));
+                summaryResp.put("all_info", json.path("all_info").asText(updatedAllInfo[0]));
+                events.add(objectMapper.writeValueAsString(summaryResp));
+            }
+
+            return events.isEmpty() ? Flux.empty() : Flux.fromIterable(events);
+
+        } catch (Exception e) {
+            log.error("解析AI返回失败, line={}", line, e);
+            return Flux.empty();
+        }
+    }
+
+    private Map<String, Object> baseResponse(Long talkId, String title, String type) {
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("type", type);
+        payload.put("talkId", talkId.toString());
+        payload.put("title", title);
+        payload.put("name", title);
+        return payload;
+    }
+
+    private Flux<String> buildErrorAndDone(Long talkId, String message) {
+        try {
+            Map<String, Object> error = new HashMap<>();
+            error.put("type", "error");
+            error.put("talkId", talkId.toString());
+            error.put("message", message);
+
+            Map<String, Object> done = new HashMap<>();
+            done.put("type", "done");
+            done.put("talkId", talkId.toString());
+            done.put("title", "异常结束");
+            done.put("name", "异常结束");
+
+            return Flux.just(
+                    objectMapper.writeValueAsString(error),
+                    objectMapper.writeValueAsString(done)
+            );
+        } catch (Exception ex) {
+            return Flux.just("{\"type\":\"done\"}");
+        }
+    }
+
     private String buildError(String msg) {
+        return buildError(msg, null);
+    }
+
+    private String buildError(String msg, Long talkId) {
         try {
             Map<String, Object> err = new HashMap<>();
             err.put("type", "error");
             err.put("message", msg);
+            if (talkId != null) {
+                err.put("talkId", talkId.toString());
+            }
             return objectMapper.writeValueAsString(err);
         } catch (Exception e) {
             return "{\"type\":\"error\",\"message\":\"系统错误\"}";
@@ -359,7 +441,7 @@ public class AIStreamingServiceImpl implements AIStreamingService {
 
         if (json != null && !json.isEmpty()) {
             try {
-                List<Cont> cached = objectMapper.readValue(json, new com.fasterxml.jackson.core.type.TypeReference<>() {});
+                List<Cont> cached = objectMapper.readValue(json, new TypeReference<>() {});
                 log.debug("历史缓存命中: key={}, size={}", key, cached == null ? 0 : cached.size());
                 return cached;
             } catch (Exception e) {

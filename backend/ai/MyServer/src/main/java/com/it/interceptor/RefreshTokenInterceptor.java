@@ -3,7 +3,6 @@ package com.it.interceptor;
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.util.StrUtil;
 import com.it.po.dto.UserDTO;
-import com.it.po.uo.User;
 import com.it.utils.JWT;
 import com.it.utils.ThreadLocalUtil;
 import jakarta.servlet.http.HttpServletRequest;
@@ -26,13 +25,12 @@ public class RefreshTokenInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
-        String token = request.getHeader("token");
+        String token = resolveToken(request);
         if (StrUtil.isBlank(token)) {
             return true;
         }
 
         try {
-            // 1. 解析 Token 获取用户 ID 和 JTI
             Long userId = JWT.getUserIdFromToken(token);
 
             Object jtiObj = JWT.parseToken(token).get("jti");
@@ -43,10 +41,7 @@ public class RefreshTokenInterceptor implements HandlerInterceptor {
             }
             String tokenJti = jtiObj.toString();
 
-            // 2. 校验单点登录：从 Redis 获取该用户当前的 JTI
             String redisJti = stringRedisTemplate.opsForValue().get("login:user:" + userId);
-
-            // 3. JTI 比对
             if (redisJti == null) {
                 log.warn("用户 {} 在 Redis 中没有登录记录，可能是 Token 过期了", userId);
                 sendUnauthorized(response, "Token 已过期，请重新登录");
@@ -59,14 +54,16 @@ public class RefreshTokenInterceptor implements HandlerInterceptor {
                 return false;
             }
 
-            // 4. 加载用户信息
             Map<Object, Object> userMap = stringRedisTemplate.opsForHash().entries("user:token:" + token);
-            if (!userMap.isEmpty()) {
-                UserDTO userDTO = BeanUtil.fillBeanWithMap(userMap, new UserDTO(), false);
-                ThreadLocalUtil.setCurrentUser((User) userDTO);
-                // 延长 Token 有效期
-                stringRedisTemplate.expire("user:token:" + token, 30, TimeUnit.MINUTES);
+            if (userMap.isEmpty()) {
+                log.warn("Token 在 Redis 中未找到用户会话: userId={}", userId);
+                sendUnauthorized(response, "登录状态已失效，请重新登录");
+                return false;
             }
+
+            UserDTO userDTO = BeanUtil.fillBeanWithMap(userMap, new UserDTO(), false);
+            ThreadLocalUtil.setCurrentUser(userDTO);
+            stringRedisTemplate.expire("user:token:" + token, 30, TimeUnit.MINUTES);
 
         } catch (Exception e) {
             log.error("Token 解析失败: {}", e.getMessage());
@@ -79,6 +76,19 @@ public class RefreshTokenInterceptor implements HandlerInterceptor {
     @Override
     public void afterCompletion(HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex) {
         ThreadLocalUtil.removeCurrentUser();
+    }
+
+    private String resolveToken(HttpServletRequest request) {
+        String token = request.getHeader("token");
+        if (StrUtil.isNotBlank(token)) {
+            return token.trim();
+        }
+        String authorization = request.getHeader("Authorization");
+        if (StrUtil.isBlank(authorization)) {
+            return null;
+        }
+        authorization = authorization.trim();
+        return authorization.startsWith("Bearer ") ? authorization.substring(7).trim() : authorization;
     }
 
     private void sendUnauthorized(HttpServletResponse response, String msg) throws Exception {

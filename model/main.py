@@ -10,7 +10,7 @@ import json
 import jwt
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import uvicorn
 
 from Agent.qwen.qwen_agent import qwenAgent
@@ -20,6 +20,7 @@ from makeData.Retrieve import UnifiedSearchEngine, CONFIG
 from config.config_loader import get_prompt_manager, get_report_manager
 
 from langchain_community.chat_models import ChatTongyi
+from utils.context_summary import ConversationSummaryService
 
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-here")
@@ -31,7 +32,7 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 
-resources = {"model": None, "naming_model": None, "executor": None}
+resources = {"model": None, "naming_model": None, "executor": None, "context_summary": None}
 
 
 class QueryRequest(BaseModel):
@@ -43,6 +44,25 @@ class QueryRequest(BaseModel):
     show_thinking: bool = True  # 是否输出中间思考过程
 
 
+class AnalyzeRequest(BaseModel):
+    patientId: int
+    data: str = Field(..., min_length=1)
+    all_info: str = ""
+    token: str
+
+
+class AnalyzeResult(BaseModel):
+    riskLevel: str
+    suggestion: str
+    analysisDetails: str
+
+
+class AnalyzeResponse(BaseModel):
+    code: int
+    msg: str
+    data: AnalyzeResult
+
+
 def init_all_resources():
     logging.info(">>> 开始组装模型依赖链...")
 
@@ -52,6 +72,10 @@ def init_all_resources():
 
     llm_max = ChatTongyi(model_name="qwen-max")
     llm_plus = ChatTongyi(model_name="qwen-plus")
+    context_summary = ConversationSummaryService(
+        llm=llm_plus,
+        prompt_manager=prompt_mgr
+    )
 
     retriever = UnifiedSearchEngine(
         persist_dir=CONFIG.get("persist_dir", "./chroma_db_unified"),
@@ -75,7 +99,7 @@ def init_all_resources():
     )
 
     naming_model = NamingModel()
-    return agent, naming_model
+    return agent, naming_model, context_summary
 
 
 @asynccontextmanager
@@ -85,11 +109,12 @@ async def lifespan(app: FastAPI):
     loop = asyncio.get_running_loop()
 
     try:
-        agent, naming = await loop.run_in_executor(
+        agent, naming, context_summary = await loop.run_in_executor(
             resources["executor"], init_all_resources
         )
         resources["model"] = agent
         resources["naming_model"] = naming
+        resources["context_summary"] = context_summary
         logging.info(">>> 所有模型组装完成，服务已就绪")
     except Exception as e:
         logging.error(f"!!! 模型初始化严重失败: {e}")
@@ -123,7 +148,6 @@ async def get_model_result(request: QueryRequest):
 
     async def generate():
         try:
-            # 添加请求参数调试日志
             logging.info(f"=== 开始处理请求 ===")
             logging.info(f"请求问题: {request.question}")
             logging.info(f"请求all_info: {request.all_info}")
@@ -132,6 +156,7 @@ async def get_model_result(request: QueryRequest):
 
             loop = asyncio.get_running_loop()
             stream_queue = asyncio.Queue()
+            final_answer_parts = []
 
             def run_stream_in_thread():
                 try:
@@ -170,9 +195,61 @@ async def get_model_result(request: QueryRequest):
             generated_name = None
             while True:
                 item = await stream_queue.get()
-                # 在第167行之后添加：
                 if item is None:
-                    yield json.dumps({"type": "done", "content": ""}, ensure_ascii=False) + "\n"
+                    if not generated_name and resources.get("naming_model"):
+                        try:
+                            generated_name = await loop.run_in_executor(
+                                resources["executor"],
+                                resources["naming_model"].run_naming,
+                                request.question
+                            )
+                        except Exception:
+                            generated_name = "咨询"
+
+                    answer_text = "".join(final_answer_parts).strip()
+                    updated_summary = request.all_info
+                    summary_meta = {
+                        "score": 0.0,
+                        "is_valuable": False,
+                        "reason": "no final answer",
+                        "summary": updated_summary,
+                        "all_info": updated_summary
+                    }
+
+                    if answer_text and resources.get("context_summary"):
+                        try:
+                            summary_result = await loop.run_in_executor(
+                                resources["executor"],
+                                resources["context_summary"].update_all_info,
+                                request.all_info,
+                                request.question,
+                                answer_text,
+                                0.4
+                            )
+                            updated_summary = summary_result.get("updated_all_info", request.all_info)
+                            summary_meta = {
+                                "score": summary_result.get("score", 0.0),
+                                "is_valuable": summary_result.get("is_valuable", False),
+                                "reason": summary_result.get("reason", ""),
+                                "summary": updated_summary,
+                                "all_info": updated_summary
+                            }
+                        except Exception as summary_error:
+                            logging.error(f"all_info 更新失败: {summary_error}")
+                            summary_meta["reason"] = f"summary failed: {summary_error}"
+
+                    final_name = generated_name or "咨询"
+                    summary_meta["name"] = final_name
+
+                    yield json.dumps({"meta": {"all_info_update": summary_meta}}, ensure_ascii=False) + "\n"
+                    yield json.dumps({
+                        "type": "done",
+                        "content": "",
+                        "result": answer_text,
+                        "summary": updated_summary,
+                        "name": final_name,
+                        "all_info": updated_summary
+                    }, ensure_ascii=False) + "\n"
                     break
 
                 if isinstance(item, dict) and item.get("type") == "error":
@@ -188,14 +265,15 @@ async def get_model_result(request: QueryRequest):
                         generated_name = "咨询"
 
                 response_chunk = {}
-
                 chunk_type = item.get("type", "") if isinstance(item, dict) else ""
 
                 if chunk_type == "result":
                     content = item["content"]
                     if hasattr(content, "content"):
                         content = content.content
-                    response_chunk["result"] = str(content)
+                    content_str = str(content)
+                    response_chunk["result"] = content_str
+                    final_answer_parts.append(content_str)
 
                 elif chunk_type == "thinking":
                     response_chunk["thinking"] = {
@@ -221,7 +299,6 @@ async def get_model_result(request: QueryRequest):
             logging.error(traceback.format_exc())
             yield json.dumps({"error": str(e)}, ensure_ascii=False) + "\n"
 
-    # 第215行，修改为：
     return StreamingResponse(
         generate(),
         media_type="text/plain",
@@ -231,6 +308,38 @@ async def get_model_result(request: QueryRequest):
             "Access-Control-Allow-Origin": "*"
         }
     )
+
+
+@app.post("/ai/analyze", response_model=AnalyzeResponse)
+async def analyze_patient_health_risk(request: AnalyzeRequest):
+    verify_token(request.token)
+
+    if not resources["model"]:
+        raise HTTPException(status_code=503, detail="Model service not ready")
+
+    patient_text = request.data.strip()
+    if not patient_text:
+        raise HTTPException(status_code=422, detail="data cannot be empty")
+
+    logging.info("=== 开始健康风险分析请求 ===")
+    logging.info(f"patientId: {request.patientId}")
+    logging.info(f"data: {patient_text[:200]}")
+    logging.info(f"all_info: {request.all_info[:200] if request.all_info else ''}")
+
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(
+        resources["executor"],
+        resources["model"].analyze_patient_risk,
+        patient_text,
+        request.all_info
+    )
+
+    return {
+        "code": 1,
+        "msg": "success",
+        "data": result
+    }
+
 
 @app.post("/admin/reload_config")
 async def reload_config():

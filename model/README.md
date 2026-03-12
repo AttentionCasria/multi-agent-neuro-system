@@ -117,6 +117,55 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 ## 📝 API 接口示例
 
+### 1. 流式临床推理
+
+**POST** `/model/get_result`
+
+```json
+{
+  "question": "患者突发言语不清伴右侧肢体无力2小时",
+  "all_info": "",
+  "token": "your-jwt-token",
+  "report_mode": "emergency",
+  "show_thinking": true
+}
+```
+
+### 2. AI 分析病人健康风险
+
+**POST** `/ai/analyze`
+
+```json
+{
+  "patientId": 1,
+  "data": "男，68岁，既往高血压、糖尿病。今日突发头晕伴右侧肢体乏力3小时，血压180/110mmHg。",
+  "all_info": "",
+  "token": "your-jwt-token"
+}
+```
+
+**响应：**
+
+```json
+{
+  "code": 1,
+  "msg": "success",
+  "data": {
+    "riskLevel": "高风险",
+    "suggestion": "建议尽快完善相关检查并由专科医生进一步评估，密切监测病情变化。",
+    "analysisDetails": "血压显著升高，伴突发神经功能缺损表现，结合既往高血压和糖尿病病史，提示存在较高脑血管事件风险。"
+  }
+}
+```
+
+- `patientId`：病人 ID，仅用于业务侧关联。
+- `data`：病人主诉、病史、体征、检查结果等文本。
+- `all_info`：可选的历史上下文补充信息。
+- `token`：必填 JWT，用于和 `/model/get_result` 保持一致的鉴权策略。
+- 返回字段 `riskLevel` 固定为：`低风险` / `中风险` / `高风险`。
+
+### 3. 旧示例
+
 **POST** `/chat`
 
 ```json
@@ -147,4 +196,3 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 3.  **OpenAI 风格代理错误**:
     *   请务必使用 `create_tool_calling_agent` 而非 `create_openai_functions_agent`，因为 Qwen 的工具调用协议与 OpenAI 不完全兼容，通用工具代理更适配。
-

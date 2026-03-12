@@ -631,30 +631,30 @@ class qwenAgent:
 
         pre_critic_prompt = f"""你是临床质量控制专家和医疗安全审查员。
 
-请基于以下患者信息和医学证据，预先识别所有潜在的临床风险和容易遗漏的问题。
-
-【患者信息】
-{context_str}
-
-【医学证据】
-{evidence_str}
-
-请从以下角度系统性识别风险：
-1. 容易被忽视的鉴别诊断（非卒中可能）
-2. 气道与呼吸的隐性风险
-3. 时间窗判断的陷阱
-4. 合并症对治疗决策的影响
-5. 可能的治疗禁忌
-6. 致命性遗漏风险
-
-对每个风险给出严重程度和建议。请精简输出，重��突出。
-
-请额外输出：
-
-- 当前最可能被忽视但致命的风险（仅1项）
-- 若未处理，最可能导致的后果
-- 建议优先级
-"""
+        请基于以下患者信息和医学证据，预先识别所有潜在的临床风险和容易遗漏的问题。
+        
+        【患者信息】
+        {context_str}
+        
+        【医学证据】
+        {evidence_str}
+        
+        请从以下角度系统性识别风险：
+        1. 容易被忽视的鉴别诊断（非卒中可能）
+        2. 气道与呼吸的隐性风险
+        3. 时间窗判断的陷阱
+        4. 合并症对治疗决策的影响
+        5. 可能的治疗禁忌
+        6. 致命性遗漏风险
+        
+        对每个风险给出严重程度和建议。请精简输出，重��突出。
+        
+        请额外输出：
+        
+        - 当前最可能被忽视但致命的风险（仅1项）
+        - 若未处理，最可能导致的后果
+        - 建议优先级
+        """
 
         proposer_task = self.llm_proposer.ainvoke([
             HumanMessage(content=proposer_prompt)
@@ -668,6 +668,90 @@ class qwenAgent:
         )
 
         return proposer_resp.content, critic_resp.content
+
+    def analyze_patient_risk(self, patient_data: str, all_info: str = "") -> Dict[str, str]:
+        """面向 API 的简版健康风险分析，返回稳定结构。"""
+        loop = None
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            analysis = loop.run_until_complete(
+                self._unified_analysis(patient_data, all_info)
+            )
+
+            context = analysis.get("structured_context", {"原始病例": patient_data})
+            complexity = str(analysis.get("complexity", "high")).lower()
+            key_risks = analysis.get("key_risks", []) or []
+            questions = analysis.get("clinical_questions", []) or []
+
+            prompt = f"""你是资深临床风险评估医生。请基于以下患者信息，输出该患者的健康风险结论。
+
+            【患者原始数据】
+            {patient_data}
+            
+            【结构化分析】
+            {json.dumps(context, ensure_ascii=False, indent=2)}
+            
+            【关键风险】
+            {json.dumps(key_risks, ensure_ascii=False)}
+            
+            【待关注临床问题】
+            {json.dumps(questions, ensure_ascii=False)}
+            
+            请直接输出 JSON：
+            {{
+                "riskLevel": "低风险/中风险/高风险",
+                "suggestion": "一句到两句干预建议",
+                "analysisDetails": "简要说明风险依据"
+            }}
+            
+            要求：
+            - 仅输出 JSON，不要 markdown
+            - riskLevel 只能是：低风险、中风险、高风险
+            - suggestion 简明、可执行，不写具体药物剂量"""
+
+            response = loop.run_until_complete(
+                self.llm_critic.ainvoke([HumanMessage(content=prompt)])
+            )
+            result = self._parse_json(getattr(response, "content", ""), {}) or {}
+
+            default_risk_level = {
+                "critical": "高风险",
+                "high": "高风险",
+                "medium": "中风险",
+                "low": "低风险"
+            }.get(complexity, "中风险")
+            default_details = (
+                "；".join(str(r) for r in key_risks[:3])
+                if key_risks else
+                "基于当前输入信息完成了初步健康风险评估，建议结合临床检查进一步确认。"
+            )
+            default_suggestion = {
+                "高风险": "建议尽快完善相关检查并由专科医生进一步评估，密切监测病情变化。",
+                "中风险": "建议近期复查关键指标，结合病史和症状做进一步评估，并做好生活方式管理。",
+                "低风险": "建议继续规律监测健康指标，保持良好生活方式，如有不适及时就诊。"
+            }[default_risk_level]
+
+            risk_level = result.get("riskLevel", default_risk_level)
+            if risk_level not in {"低风险", "中风险", "高风险"}:
+                risk_level = default_risk_level
+
+            return {
+                "riskLevel": risk_level,
+                "suggestion": result.get("suggestion") or default_suggestion,
+                "analysisDetails": result.get("analysisDetails") or default_details
+            }
+        except Exception as e:
+            logger.error(f"患者风险分析失败: {e}")
+            return {
+                "riskLevel": "中风险",
+                "suggestion": "建议结合线下检查结果进一步评估，如症状加重请及时就医。",
+                "analysisDetails": "系统已完成基础风险评估，但详细分析生成失败，请结合临床实际判断。"
+            }
+        finally:
+            if loop:
+                loop.close()
 
 
 _FALLBACK_PROPOSER = """你是三甲医院神经内科主任医师，拥有 20 年急诊经验。

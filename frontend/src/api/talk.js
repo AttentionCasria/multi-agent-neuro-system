@@ -16,9 +16,6 @@ export const sendQuestionAPI = (params) => request.post('/user/ques/getQues', pa
 // params = { question: String }
 export const newChatAPI = (params) => request.post('/user/ques/newGetQues', params)
 
-// api/talk.js
-// api/talk.js
-
 function streamRequest(params, onChunk) {
   const userStore = useUserStore()
   const token = userStore.token
@@ -32,7 +29,19 @@ function streamRequest(params, onChunk) {
       },
       body: JSON.stringify(params),
     })
-      .then((res) => {
+      .then(async (res) => {
+        if (!res.ok) {
+          let message = `请求失败: ${res.status}`
+          try {
+            const text = await res.text()
+            if (text) message = text
+          } catch {
+            // ignore
+          }
+          reject(new Error(message))
+          return
+        }
+
         if (!res.body) {
           reject(new Error('ReadableStream 不存在'))
           return
@@ -45,6 +54,8 @@ function streamRequest(params, onChunk) {
         let realTalkId = null
         let title = '回答'
         let finished = false
+        let buffer = ''
+        let currentEvent = 'message'
 
         function safeResolve(payload) {
           if (finished) return
@@ -52,51 +63,122 @@ function streamRequest(params, onChunk) {
           resolve(payload)
         }
 
-        function readChunk() {
-          reader
-            .read()
-            .then(({ value, done }) => {
+        function safeReject(error) {
+          if (finished) return
+          finished = true
+          reject(error)
+        }
+
+        function buildResult() {
+          return {
+            data: {
+              talkId: realTalkId,
+              title,
+              content: fullAnswer,
+            },
+          }
+        }
+
+        function handleMessageBlock(block) {
+          if (!block.trim()) return
+
+          const lines = block.split(/\r?\n/)
+          const dataLines = []
+          let eventName = currentEvent || 'message'
+
+          for (const line of lines) {
+            if (!line) continue
+            if (line.startsWith(':')) continue
+            if (line.startsWith('event:')) {
+              eventName = line.slice(6).trim() || 'message'
+              continue
+            }
+            if (line.startsWith('data:')) {
+              dataLines.push(line.slice(5).trimStart())
+            }
+          }
+
+          if (dataLines.length === 0) return
+
+          const jsonStr = dataLines.join('\n').trim()
+          if (!jsonStr) return
+
+          try {
+            const data = JSON.parse(jsonStr)
+            const type = data.type || eventName
+
+            if (data.talkId) {
+              realTalkId = data.talkId
+            }
+            if (data.title) {
+              title = data.title
+            }
+            if (data.name && (!title || title === '回答')) {
+              title = data.name
+            }
+
+            if (type === 'chunk') {
+              const text = data.content || ''
+              fullAnswer += text
+              if (onChunk) onChunk(text)
+              return
+            }
+
+            if (type === 'done') {
+              safeResolve(buildResult())
+              return
+            }
+
+            if (type === 'error') {
+              safeReject(new Error(data.message || data.error || '流式响应错误'))
+            }
+          } catch (e) {
+            console.error('解析流失败', e, jsonStr)
+          }
+        }
+
+        async function readChunk() {
+          try {
+            while (true) {
+              const { value, done } = await reader.read()
               if (done) {
-                // ⚠️ 不在这里 resolve
+                buffer += decoder.decode()
+                while (buffer.includes('\n\n')) {
+                  const idx = buffer.indexOf('\n\n')
+                  const block = buffer.slice(0, idx)
+                  buffer = buffer.slice(idx + 2)
+                  handleMessageBlock(block)
+                  if (finished) return
+                }
+
+                // EOF 兜底：如果后端正常关闭但前端漏掉 done，至少结束 loading
+                if (!finished) {
+                  safeResolve(buildResult())
+                }
                 return
               }
 
-              const chunk = decoder.decode(value, { stream: true })
+              buffer += decoder.decode(value, { stream: true })
+              buffer = buffer.replace(/\r\n/g, '\n')
 
-              chunk.split('\n\n').forEach((block) => {
-                if (!block.startsWith('data:')) return
-
-                const jsonStr = block.replace(/^data:\s*/, '').trim()
-                if (!jsonStr) return
-
-                try {
-                  const data = JSON.parse(jsonStr)
-
-                  if (data.type === 'init') {
-                    realTalkId = data.talkId
-                  } else if (data.type === 'chunk') {
-                    const text = data.content || ''
-                    fullAnswer += text
-                    if (onChunk) onChunk(text)
-                  } else if (data.type === 'done') {
-                    title = data.title || title
-
-                    safeResolve({
-                      data: {
-                        talkId: realTalkId,
-                        title,
-                        content: fullAnswer,
-                      },
-                    })
+              while (buffer.includes('\n\n')) {
+                const idx = buffer.indexOf('\n\n')
+                const block = buffer.slice(0, idx)
+                buffer = buffer.slice(idx + 2)
+                handleMessageBlock(block)
+                if (finished) {
+                  try {
+                    await reader.cancel()
+                  } catch {
+                    // ignore cancel errors
                   }
-                } catch (e) {
-                  console.error('解析流失败', e)
+                  return
                 }
-              })
-
-              readChunk()
-            })
-            .catch(reject)
+              }
+            }
+          } catch (error) {
+            safeReject(error)
+          }
         }
 
         readChunk()

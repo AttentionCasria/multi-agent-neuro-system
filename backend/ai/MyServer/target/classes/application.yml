@@ -68,6 +68,9 @@ ai:
     url: ${aiserver.ai-api.url}
     connect-timeout: 10000
     read-timeout: 600000
+  security:
+    # 需要与 Python 模型服务中的 SECRET_KEY 保持一致，否则 /model/get_result 会返回 401 Invalid token
+    shared-jwt-secret: ${aiserver.ai-api.shared-jwt-secret:/jdhn:836**1}
 
 # 阿里云 OSS
 alioss:

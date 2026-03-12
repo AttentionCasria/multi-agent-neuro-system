@@ -13,7 +13,8 @@ aiserver:
     password: ""
 
   ai-api:
-    url: ${AI_API_URL:http://127.0.0.1:8000/model/get_result}
+    url: ${AI_API_URL:http://127.0.0.1:8000}
+    shared-jwt-secret: ${AI_API_SHARED_JWT_SECRET:/jdhn:836**1}
 
   alioss:
     endpoint: ${OSS_ENDPOINT:https://oss-cn-beijing.aliyuncs.com}

@@ -45,11 +45,14 @@ public class QuesController {
     @PostMapping(value = "/streamingQues", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<String>> streamingQues(
             @RequestBody QuesParam quesParam,
-            @RequestHeader(value = "token", required = false) String token
+            @RequestHeader(value = "token", required = false) String token,
+            @RequestHeader(value = "Authorization", required = false) String authorization
     ) {
         if (ThreadLocalUtil.getCurrentUser() == null) {
-            return Flux.just(sse("message", json("error", mapOf("message", "未登录"))));
+            return Flux.just(sse("error", json("error", mapOf("message", "未登录"))));
         }
+
+        String upstreamToken = resolveToken(token, authorization);
 
         Long userId = ThreadLocalUtil.getCurrentUser().getId();
         String talkIdStr = quesParam.getTalkId();
@@ -104,7 +107,7 @@ public class QuesController {
         });
 
         Flux<String> chatFlux = streamingService
-                .streamChat(userId, finalTalkId, quesParam.getQuestion(), token)
+                .streamChat(userId, finalTalkId, quesParam.getQuestion(), upstreamToken)
                 .map(this::wrapChunkIfNeeded);
 
         return initFlux
@@ -120,14 +123,26 @@ public class QuesController {
                                 "title", "异常结束"
                         ))
                 ))
-                .map(data -> sse("message", data));
+                .map(data -> sse(resolveEventName(data), data));
 
     }
 
     private ServerSentEvent<String> sse(String event, String data) {
         return ServerSentEvent.<String>builder()
-                .data(data)   // ❗去掉 event
+                .event(event)
+                .data(data)
                 .build();
+    }
+
+    private String resolveEventName(String data) {
+        if (data == null || data.isBlank()) {
+            return "message";
+        }
+        try {
+            return objectMapper.readTree(data).path("type").asText("message");
+        } catch (Exception e) {
+            return "message";
+        }
     }
 
     private String wrapChunkIfNeeded(String data) {
@@ -139,6 +154,17 @@ public class QuesController {
             return data;
         }
         return json("chunk", mapOf("content", data));
+    }
+
+    private String resolveToken(String token, String authorization) {
+        if (token != null && !token.isBlank()) {
+            return token.trim();
+        }
+        if (authorization != null && !authorization.isBlank()) {
+            String value = authorization.trim();
+            return value.startsWith("Bearer ") ? value.substring(7).trim() : value;
+        }
+        return null;
     }
 
     private String json(String type, Map<String, Object> payload) {
