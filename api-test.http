@@ -1,0 +1,157 @@
+### 0. 注册账号（首次使用/空数据库时执行）
+POST http://localhost:8080/api/user/register
+Content-Type: application/json
+
+{
+  "name": "darkside",
+  "password": "Gong",
+  "image": ""
+}
+
+### 1. 登录并自动保存 Token
+POST http://localhost:8080/api/user/login
+Content-Type: application/json
+
+{
+  "name": "darkside",
+  "password": "Gong"
+}
+
+> {%
+    if (response.body.data && response.body.data.token) {
+        client.global.set("auth_token", response.body.data.token);
+        client.log("Token 已保存: " + client.global.get("auth_token"));
+    } else {
+        client.log("登录失败: " + JSON.stringify(response.body));
+    }
+%}
+
+### 2. 展示本人信息
+GET http://localhost:8080/api/user/showInfo
+token: {{auth_token}}
+
+### 3. 修改密码
+PUT http://localhost:8080/api/user/showInfo/changeKey
+Content-Type: application/json
+token: {{auth_token}}
+
+{
+  "prePassword": "Gong",
+  "newPassword": "Gong",
+  "image": ""
+}
+
+### 4. 新增病人（张三）
+POST http://localhost:8080/api/patients
+Content-Type: application/json
+token: {{auth_token}}
+
+{
+  "name": "张三",
+  "history": "糖尿病，高血压",
+  "notes": "避免高糖饮食，定期检查血糖"
+}
+
+> {%
+    if (response.body.data && response.body.data.id) {
+        client.global.set("patient_id", response.body.data.id);
+        client.log("病人ID已保存: " + client.global.get("patient_id"));
+    }
+%}
+
+### 5. 新增病人（李四）
+POST http://localhost:8080/api/patients
+Content-Type: application/json
+token: {{auth_token}}
+
+{
+  "name": "李四",
+  "history": "心脏病，过敏史",
+  "notes": "每日服药，避免剧烈运动"
+}
+
+### 6. 获取病人列表（分页）
+GET http://localhost:8080/api/patients?page=1&size=10
+token: {{auth_token}}
+
+### 7. 获取病人列表（按姓名过滤）
+GET http://localhost:8080/api/patients?page=1&size=10&name=张三
+token: {{auth_token}}
+
+### 8. 获取病人列表（按疾病过滤）
+GET http://localhost:8080/api/patients?page=1&size=10&diseases=糖尿病
+token: {{auth_token}}
+
+### 9. 获取单个病人详情
+GET http://localhost:8080/api/patients/{{patient_id}}
+token: {{auth_token}}
+
+### 10. 修改病人信息
+PUT http://localhost:8080/api/patients/{{patient_id}}
+Content-Type: application/json
+token: {{auth_token}}
+
+{
+  "name": "张三（更新）",
+  "history": "糖尿病，高血压，冠心病",
+  "notes": "新增备注：注意睡眠质量"
+}
+
+### 11. 获取学习资料列表（全部）
+GET http://localhost:8080/api/learning-materials?page=1&size=10
+token: {{auth_token}}
+
+### 12. 获取学习资料列表（按分类过滤）
+GET http://localhost:8080/api/learning-materials?category=心血管疾病&page=1&size=10
+token: {{auth_token}}
+
+### 13. 获取学习资料详情（需数据库中有数据）
+GET http://localhost:8080/api/learning-materials/1
+token: {{auth_token}}
+
+### 14. AI 分析病人健康数据（需 AI 模型服务运行）
+POST http://localhost:8080/api/ai/analyze
+Content-Type: application/json
+token: {{auth_token}}
+
+{
+  "patientId": {{patient_id}},
+  "data": "血压：150/95 mmHg（偏高），空腹血糖：7.2 mmol/L（超标），BMI：26.8（超重）"
+}
+
+### 15. 同步对话到 AI 分析（需 AI 模型服务运行）
+POST http://localhost:8080/api/ai/sync-talk
+Content-Type: application/json
+token: {{auth_token}}
+
+{
+  "patientId": {{patient_id}},
+  "talkId": 1,
+  "conversation": [
+    {
+      "role": "user",
+      "content": "我最近血压升高，头晕，有时候心跳加速，这是什么情况？"
+    },
+    {
+      "role": "assistant",
+      "content": "根据您的描述，结合您的糖尿病和高血压病史，存在一定心血管风险，建议及时就医调整用药方案。"
+    }
+  ],
+  "mergeWithHistory": true
+}
+
+### 16. 查看 AI 分析后的病人详情（aiOpinion 应已更新）
+GET http://localhost:8080/api/patients/{{patient_id}}
+token: {{auth_token}}
+
+### 17. 获取对话列表
+GET http://localhost:8080/api/user/title
+token: {{auth_token}}
+
+### 18. 删除病人（清理测试数据）
+DELETE http://localhost:8080/api/patients/{{patient_id}}
+token: {{auth_token}}
+
+### 19. 退出登录
+POST http://localhost:8080/api/user/logOut
+token: {{auth_token}}

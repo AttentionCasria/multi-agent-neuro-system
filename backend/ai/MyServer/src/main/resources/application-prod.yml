@@ -4,7 +4,7 @@ aiserver:
     host: ${DB_HOST:127.0.0.1}  # 从环境变量读取
     port: ${DB_PORT:3306}
     database: ${DB_NAME:medai}
-    username: ${DB_USER:medai_user}
+    username: root
     password: ${DB_PASSWORD}  # 必须从环境变量读取
 
   redis:
