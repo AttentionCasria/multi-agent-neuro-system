@@ -7,6 +7,8 @@ import AppAvatar from '@/components/AppAvatar.vue'
 import { useUserStore } from '@/stores/user'
 import { deleteChatAPI, getChatHistoryAPI, getChatTitlesAPI, newChatStreamAPI, sendQuestionStreamAPI } from '@/api/talk'
 import LoadingModel from '@/components/LoadingModel.vue'
+import DeleteSVG from '@/components/svg/DeleteSVG.vue'
+import DeleteAllSVG from '@/components/svg/DeleteAllSVG.vue'
 // 假设 ArrowSVG 是全局组件或已注册，如果不是请取消下面注释并导入
 // import ArrowSVG from '@/components/ArrowSVG.vue'
 
@@ -266,13 +268,17 @@ const scrollToBottom = () => {
   <div class="container">
     <div class="chat-history">
       <div class="new-chat" @click="handleNewChat">开始新对话</div>
-      <div class="delete-chat" @click="handleDeleteAll">删除所有对话</div>
-      <h3>历史记录</h3>
+      <div class="history-header">
+        <h3>历史记录</h3>
+        <DeleteAllSVG size="24" color="#666" @click="handleDeleteAll" class="delete-chat" />
+      </div>
       <div class="chat-list">
         <div v-for="talk in talkTitleList" :key="talk.talkId" class="chat-item"
           :class="{ active: talk.talkId === currentTalkId }" @click="handleClickTalkTitle(talk.talkId)">
           <span class="title">{{ talk.title }}</span>
-          <button class="delete-btn" @click.stop="handleDeleteChat(talk.talkId)">删除</button>
+          <button class="delete-btn" type="button" aria-label="删除对话" @click.stop="handleDeleteChat(talk.talkId)">
+            <DeleteSVG size="18" color="currentColor" />
+          </button>
         </div>
       </div>
     </div>
@@ -339,8 +345,7 @@ const scrollToBottom = () => {
     color: #333;
     border-right: 1px solid #e5e7eb;
 
-    .new-chat,
-    .delete-chat {
+    .new-chat {
       margin: 15px auto;
       text-align: center;
       padding: 10px;
@@ -361,20 +366,30 @@ const scrollToBottom = () => {
       background-color: #05a583;
     }
 
-    .delete-chat {
-      color: #ff4d4f;
-      background-color: #fff;
-    }
+    .history-header {
+      margin: 32px 8px 16px 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
 
-    .delete-chat:hover {
-      background-color: #fff1f0;
-      border-color: #ffa39e;
-    }
+      h3 {
+        font-size: 14px;
+        margin: 0;
+        color: #666;
+      }
 
-    h3 {
-      font-size: 14px;
-      margin: 20px 10px 10px;
-      color: #666;
+      .delete-chat {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        color: #666;
+        transition: color 0.15s ease;
+
+        &:hover {
+          color: #ff4d4f;
+        }
+      }
     }
 
     .chat-list {
@@ -403,17 +418,35 @@ const scrollToBottom = () => {
 
         .delete-btn {
           margin-left: 8px; // 和标题拉开一点距离
-          padding: 2px 6px;
-          font-size: 12px;
+          width: 24px;
+          height: 24px;
+          padding: 0;
           color: #ff4d4f;
-          background-color: #fff;
-          border: 1px solid #ff4d4f;
-          border-radius: 4px;
+          background-color: transparent;
+          border: none;
+          border-radius: 6px;
           cursor: pointer;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          opacity: 0;
+          visibility: hidden;
+          pointer-events: none;
           transition: all 0.15s ease;
 
           // 防止按钮点击触发父级点击（如果有）
           flex-shrink: 0;
+
+          &:hover {
+            color: #dc2626;
+            background-color: #fee2e2;
+          }
+        }
+
+        &:hover .delete-btn {
+          opacity: 1;
+          visibility: visible;
+          pointer-events: auto;
         }
 
         &:hover {
@@ -458,8 +491,8 @@ const scrollToBottom = () => {
         align-items: center;
         gap: 10px;
         cursor: pointer;
-        padding: 4px 8px;
-        border-radius: 20px;
+        padding: 4px 16px;
+        border-radius: 8px;
         transition: background-color 0.2s;
 
         &:hover {
