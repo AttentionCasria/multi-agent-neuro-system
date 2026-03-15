@@ -20,10 +20,11 @@ class MedicalReActAgent:
 每行一个，必须使用中文医学术语，不要解释。
 临床问题：{question}"""
 
+    # 【修改点4】优先提取AHA/ASA指南推荐等级
     _FALLBACK_EVIDENCE_PROMPT = """你是循证医学证据整理专家。
 临床问题：{question}
 检索文献：{evidence}
-任务：提取与问题直接相关的事实，保留推荐等级和具体数字。"""
+任务：提取与问题直接相关的事实，保留推荐等级和具体数字。优先提取指南。"""
 
     def __init__(
         self,
@@ -48,9 +49,15 @@ class MedicalReActAgent:
             logger.info(f"📋 [MedicalAgent] 快速检索: {question[:60]}...")
 
             top_k = CONFIG.get("top_k_final", 3)
+            search_query = question
+
+            # 【修改点4】优先拉取最新指南
+            if "指南" in question or "AHA" in question or "ASA" in question:
+                top_k = 5  # 多拉几条
+                search_query = question + " 2023 2026 AHA/ASA 中国卒中指南"
 
             # 带重试的检索（应对 rerank rate limit）
-            docs = self._search_with_retry(question, top_k)
+            docs = self._search_with_retry(search_query, top_k)
 
             if not docs:
                 logger.warning(f"  ⚠️ 未检索到文档: {question[:40]}")

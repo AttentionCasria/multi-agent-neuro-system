@@ -23,16 +23,7 @@ from langchain_community.chat_models import ChatTongyi
 from utils.context_summary import ConversationSummaryService
 
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-
-# JWT 密钥：必须与 Java 后端 AI_API_SHARED_JWT_SECRET 环境变量的值完全一致
-# 优先读取 AI_JWT_SECRET，兼容旧环境变量名 SECRET_KEY
-SECRET_KEY = os.getenv("AI_JWT_SECRET") or os.getenv("SECRET_KEY")
-if not SECRET_KEY:
-    raise RuntimeError(
-        "JWT 密钥未配置！请设置环境变量 AI_JWT_SECRET，"
-        "其值必须与 Java 后端的 AI_API_SHARED_JWT_SECRET 完全相同。"
-        "示例：export AI_JWT_SECRET='your-strong-secret-key'"
-    )
+SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-here")
 ALGORITHM = "HS256"
 
 logging.basicConfig(
