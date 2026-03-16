@@ -182,9 +182,15 @@ public class AIStreamingServiceImpl implements AIStreamingService {
         }
 
         // ========= 1️⃣ 自动创建对话 =========
-        if (talkId == null || talkService.getById(talkId) == null) {
+        if (talkId != null) {
+            Talk existingTalk = talkService.getById(talkId);
+            if (existingTalk == null || !userId.equals(existingTalk.getUserId())) {
+                log.warn("talkId={} 不存在或不属于 userId={}，自动创建新对话", talkId, userId);
+                talkId = createNewTalk(userId);
+            }
+        } else {
             talkId = createNewTalk(userId);
-            log.info("自动创建新对话: userId={}, talkId={}", userId, talkId);
+            log.info("talkId 为 null，自动创建新对话: userId={}", userId);
         }
 
         final Long finalTalkId = talkId;
@@ -445,6 +451,11 @@ public class AIStreamingServiceImpl implements AIStreamingService {
         List<Cont> history = getCachedHistory(userId, talkId);
         if (history == null || history.isEmpty()) return "";
 
+        if (history.size() % 2 != 0) {
+            log.warn("历史记录数量为奇数 ({})，丢弃末尾孤立条目以保持角色对齐: userId={}, talkId={}",
+                    history.size(), userId, talkId);
+            history = history.subList(0, history.size() - 1);
+        }
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < history.size(); i++) {
             sb.append(i % 2 == 0 ? "user: " : "assistant: ")
