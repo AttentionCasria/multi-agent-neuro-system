@@ -103,6 +103,7 @@ const themeStore = useThemeStore()
 
   .login-left {
     flex: none;
+    display: none;
     min-height: 280px;
     border-right: none;
     border-bottom: 1px solid var(--color-border);
