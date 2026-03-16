@@ -267,7 +267,9 @@ function shortText(value, fallback = '暂无内容') {
             </div>
 
             <div class="message" :class="{ user: index % 2 === 0 }">
-              <template v-if="index % 2 === 0">{{ msg }}</template>
+              <template v-if="index % 2 === 0">
+                <div class="plain-text">{{ msg }}</div>
+              </template>
               <div v-else class="markdown-body" v-html="renderMarkdown(msg)"></div>
             </div>
           </article>
@@ -578,6 +580,11 @@ function shortText(value, fallback = '暂无内容') {
     border-color: var(--color-message-user-border);
     border-radius: 12px 2px 12px 12px;
   }
+}
+
+.plain-text {
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* ─────────────────── Input box ─────────────────── */
