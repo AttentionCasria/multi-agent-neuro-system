@@ -29,6 +29,16 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  // AI 处于推理阶段（收到 thinking 事件，尚未收到第一个 chunk）
+  isThinking: {
+    type: Boolean,
+    default: false,
+  },
+  // 当前 thinking 步骤的提示文字（来自 thinking.title / thinking.step）
+  thinkingHint: {
+    type: String,
+    default: '',
+  },
   chatLoading: {
     type: Boolean,
     default: false,
@@ -117,6 +127,14 @@ watch(
   () => props.currentTalkList.length,
   () => {
     nextTick(scrollToBottom)
+  },
+)
+
+// 流式生成期间，监听最后一条消息内容变化，自动滚动到底部
+watch(
+  () => props.currentTalkList[props.currentTalkList.length - 1],
+  () => {
+    if (props.isStreaming || props.isThinking) nextTick(scrollToBottom)
   },
 )
 
@@ -251,7 +269,9 @@ function shortText(value, fallback = '暂无内容') {
       <div class="section-head">
         <div style="display: flex; align-items: center; gap: 12px;">
           <h3>实时问诊</h3>
-          <span class="state-pill" :class="{ live: isStreaming }">{{ isStreaming ? '生成中' : '待输入' }}</span>
+          <span class="state-pill" :class="{ live: isStreaming || isThinking, thinking: isThinking }">
+            {{ isThinking ? '思考中' : isStreaming ? '生成中' : '待输入' }}
+          </span>
         </div>
       </div>
 
@@ -270,7 +290,19 @@ function shortText(value, fallback = '暂无内容') {
               <template v-if="index % 2 === 0">
                 <div class="plain-text">{{ msg }}</div>
               </template>
-              <div v-else class="markdown-body" v-html="renderMarkdown(msg)"></div>
+              <template v-else>
+                <!-- thinking 阶段：消息为空且是最后一条，显示推理动画 -->
+                <div
+                  v-if="!msg && isThinking && index === currentTalkList.length - 1"
+                  class="thinking-indicator"
+                >
+                  <span class="thinking-dots">
+                    <span></span><span></span><span></span>
+                  </span>
+                  <span class="thinking-text">{{ thinkingHint || 'AI 思考中...' }}</span>
+                </div>
+                <div v-else class="markdown-body" v-html="renderMarkdown(msg)"></div>
+              </template>
             </div>
           </article>
         </div>
@@ -529,6 +561,59 @@ function shortText(value, fallback = '暂无内容') {
   &.live {
     background: rgba(17, 150, 127, 0.14);
     color: var(--color-primary-dark);
+  }
+
+  &.thinking {
+    background: rgba(99, 102, 241, 0.12);
+    color: #6366f1;
+  }
+}
+
+/* ─────────────────── Thinking indicator ─────────────────── */
+.thinking-indicator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 0;
+  color: var(--color-text-medium);
+  font-size: 13px;
+}
+
+.thinking-text {
+  line-height: 1.4;
+}
+
+.thinking-dots {
+  display: flex;
+  gap: 5px;
+  flex-shrink: 0;
+
+  span {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--color-primary);
+    animation: thinking-bounce 1.4s ease-in-out infinite both;
+
+    &:nth-child(2) {
+      animation-delay: 0.22s;
+    }
+
+    &:nth-child(3) {
+      animation-delay: 0.44s;
+    }
+  }
+}
+
+@keyframes thinking-bounce {
+  0%, 80%, 100% {
+    transform: scale(0.55);
+    opacity: 0.35;
+  }
+
+  40% {
+    transform: scale(1);
+    opacity: 1;
   }
 }
 

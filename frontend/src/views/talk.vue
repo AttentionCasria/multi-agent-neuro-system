@@ -45,6 +45,10 @@ const talkTitleList = ref([])
 const currentTalkId = ref(NEW_TALK_ID)
 const currentTalkList = ref([])
 const isStreaming = ref(false)
+// isThinking：收到第一个 chunk 之前，AI 处于推理（thinking）阶段
+const isThinking = ref(false)
+// thinkingHint：thinking 事件中的 title/step 字段，用于显示当前推理步骤
+const thinkingHint = ref('')
 const chatLoading = ref(false)
 const deleteAllLoading = ref(false)
 
@@ -243,25 +247,35 @@ async function handleSendMessage(text) {
   if (!text || isStreaming.value) return
 
   isStreaming.value = true
+  isThinking.value = true   // 流开始前先进入 thinking 阶段
+  thinkingHint.value = ''
   currentTalkList.value.push(text)
   currentTalkList.value.push('')
   const aiIndex = currentTalkList.value.length - 1
 
+  // thinking 事件回调：更新推理步骤提示
+  const onThinking = (thinking) => {
+    thinkingHint.value = thinking.title || thinking.step || 'AI 思考中...'
+  }
+
+  // chunk 事件回调：收到第一个 chunk 即结束 thinking 阶段
+  const onChunk = (chunk) => {
+    if (isThinking.value) {
+      isThinking.value = false
+      thinkingHint.value = ''
+    }
+    currentTalkList.value[aiIndex] += chunk
+  }
+
   try {
     const finalResult =
       currentTalkId.value === NEW_TALK_ID
-        ? await newChatStreamAPI({ question: text }, (chunk) => {
-          currentTalkList.value[aiIndex] += chunk
-        })
+        ? await newChatStreamAPI({ question: text }, onChunk, onThinking)
         : await sendQuestionStreamAPI(
-          {
-            talkId: currentTalkId.value,
-            question: text,
-          },
-          (chunk) => {
-            currentTalkList.value[aiIndex] += chunk
-          },
-        )
+            { talkId: currentTalkId.value, question: text },
+            onChunk,
+            onThinking,
+          )
 
     const { title, content } = finalResult.data || {}
     const talkId = normalizeTalkId(finalResult.data?.talkId)
@@ -286,9 +300,13 @@ async function handleSendMessage(text) {
     console.error('发送消息失败', error)
     currentTalkList.value.splice(aiIndex, 1)
     currentTalkList.value.pop()
-    alert(error?.msg || error?.message || '发送失败，请稍后再试')
+    // 利用结构化错误码：retryable=true 提示用户可以重试
+    const retryTip = error.retryable ? '\n请稍后重试。' : ''
+    alert(error?.msg || error?.message || `发送失败，请稍后再试${retryTip}`)
   } finally {
     isStreaming.value = false
+    isThinking.value = false
+    thinkingHint.value = ''
   }
 }
 
@@ -687,7 +705,8 @@ function openPatientWorkspace(patientId) {
     <main class="workspace-content">
       <ChatWorkspace v-if="activeTab === 'chat'" v-model:sync-patient-id="syncPatientId"
         :talk-title-list="talkTitleList" :current-talk-id="currentTalkId" :current-talk-list="currentTalkList"
-        :is-streaming="isStreaming" :chat-loading="chatLoading" :patients="patients" :sync-patient="syncPatient"
+        :is-streaming="isStreaming" :is-thinking="isThinking" :thinking-hint="thinkingHint"
+        :chat-loading="chatLoading" :patients="patients" :sync-patient="syncPatient"
         :conversation-preview="conversationPreview" :can-sync-conversation="canSyncConversation"
         :sync-result="syncResult" @select-talk="handleSelectTalk" @new-chat="handleNewChat"
         @delete-chat="handleDeleteChat" @delete-all="handleDeleteAll" @send-message="handleSendMessage"
