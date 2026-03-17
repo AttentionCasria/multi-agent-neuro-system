@@ -11,7 +11,7 @@ pydantic==2.12.5
 PyJWT==2.10.1
 transformers==4.38.2
 sentence-transformers==2.7.0
-torch==2.10.0
+torch==2.1.0
 numpy==1.26.4
 pandas==3.0.0
 scikit-learn==1.8.0

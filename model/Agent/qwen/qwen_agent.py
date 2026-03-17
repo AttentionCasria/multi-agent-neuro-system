@@ -7,7 +7,7 @@ import logging
 import asyncio
 import json
 import re
-from typing import Generator, List, Dict, Any, Optional, TypedDict
+from typing import AsyncGenerator, List, Dict, Any, Optional, TypedDict
 from langchain_core.messages import HumanMessage, SystemMessage
 from config.config_loader import PromptManager, ReportTemplateManager
 from error_codes import build_error_event, format_error_log
@@ -79,7 +79,7 @@ COT_EXAMPLES = """示例1：
 
 答案：让我们一步步思考。
 
-1. 首选平扫CT是因为快速、普及、安全，且能明确排除出血。急性期第一要务是区分缺血还是出血。CT对急性脑出血诊断率接近100%。CT“未见异常”不代表没问题，超急性期脑梗死CT常不显示低密度灶，这反而是溶栓的影像学指征。
+1. 首选平扫CT是因为快速、普及、安全，且能明确排除出血。急性期第一要务是区分缺血还是出血。CT对急性脑出血诊断率接近100%。CT"未见异常"不代表没问题，超急性期脑梗死CT常不显示低密度灶，这反而是溶栓的影像学指征。
 
 2. 溶栓后24小时需要复查CT平扫排除出血转化，同时进行MRI+DWI/MRA。DWI显示最终梗死大小和位置，MRA显示大血管有无闭塞，有助于病因分型和指导二级预防。
 
@@ -352,10 +352,14 @@ class qwenAgent:
             "user_questions": user_questions
         }
 
-    def _node_retrieve(self, state: dict) -> dict:
+    async def _node_retrieve(self, state: dict) -> dict:
+        # 改为 async：同步检索（向量搜索）放入线程池，避免阻塞事件循环
         questions = state.get("clinical_questions", [])
         logging.info(f"🔧 Agent Tool 调用: retrieve_evidence")
-        evidence = self._run_tool("retrieve_evidence", questions)
+        loop = asyncio.get_event_loop()
+        evidence = await loop.run_in_executor(
+            None, self._run_tool, "retrieve_evidence", questions
+        )
         evidence_truncated = self._truncate(evidence, MAX_EVIDENCE_CHARS)
         return {"evidence": evidence_truncated}
 
@@ -367,20 +371,16 @@ class qwenAgent:
         proposal, critique = await self._parallel_propose_and_critique(context, evidence, all_info, user_questions)
         return {"proposal": proposal, "critique": critique}
 
-    def _run_clinical_reasoning_core(
+    async def _run_clinical_reasoning_core(
             self,
             case_text: str,
             all_info: str = "",
             report_mode: str = "emergency",
             show_thinking: bool = True
-    ) -> Generator[dict, None, None]:
-        """内部推理管线，直接 yield 原始事件，不做聚合。由 run_clinical_reasoning 包装调用。"""
-        loop = None
+    ) -> AsyncGenerator[dict, None]:
+        """内部推理管线，纯异步生成器，直接 yield 原始事件，不做聚合。由 run_clinical_reasoning 包装调用。"""
         try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-            classification = loop.run_until_complete(self._classify_multi_mcq_with_llm(case_text))
+            classification = await self._classify_multi_mcq_with_llm(case_text)
             llm_multi_mcq = classification.get("is_multi_mcq", False)
             llm_q_type = classification.get("question_type", "unknown")
             is_multi_mcq = llm_multi_mcq or self._is_multi_mcq(case_text)
@@ -389,7 +389,7 @@ class qwenAgent:
                 if show_thinking:
                     yield self._emit_thinking("Intent", "✅ 检测到多题选择题任务", f"进入拆题并行求解流程（type={llm_q_type}）")
                 default_q_type = llm_q_type if llm_q_type in {"single", "multiple", "mixed"} else "unknown"
-                multi_result = loop.run_until_complete(self._run_multi_mcq(case_text, default_question_type=default_q_type))
+                multi_result = await self._run_multi_mcq(case_text, default_question_type=default_q_type)
                 if multi_result:
                     yield {"type": "result", "content": multi_result}
                     if show_thinking:
@@ -406,7 +406,7 @@ class qwenAgent:
                 "show_thinking": show_thinking
             }
 
-            result = loop.run_until_complete(self.graph.ainvoke(initial_state))
+            result = await self.graph.ainvoke(initial_state)
             intent_type = result.get("intent_type", "irrelevant")
 
             if intent_type == "irrelevant":
@@ -427,7 +427,7 @@ class qwenAgent:
                 - 禁止确诊语气
                 - 禁止具体剂量
                 - 如果需要，引用权威指南"""
-                knowledge_response = loop.run_until_complete(self.llm_proposer.ainvoke([HumanMessage(content=knowledge_prompt)]))
+                knowledge_response = await self.llm_proposer.ainvoke([HumanMessage(content=knowledge_prompt)])
                 answer = knowledge_response.content if hasattr(knowledge_response, "content") else str(knowledge_response)
                 yield {"type": "result", "content": answer}
                 return
@@ -478,34 +478,19 @@ class qwenAgent:
             proposal_truncated = self._truncate(proposal, MAX_PROPOSAL_CHARS)
             critique_truncated = self._truncate(critique, MAX_CRITIQUE_CHARS)
 
-            # 逐块 yield chunk 事件，实现打字机效果（不再整体收集后一次性发送）
-            # 使用同步队列作为桥梁，将异步生成器的输出传递给同步生成器
-            import queue as _queue
-            chunk_bridge: _queue.Queue = _queue.Queue()
-            _SENTINEL = object()
-
-            async def _push_chunks():
-                async for chunk in self.medical_assistant.stream_final_report(
-                        context=context,
-                        proposal=proposal_truncated,
-                        critique=critique_truncated,
-                        evidence=evidence,
-                        all_info=all_info,
-                        report_mode=report_mode
-                ):
-                    if isinstance(chunk, str) and chunk:
-                        chunk_bridge.put({"type": "chunk", "content": chunk})
-                    elif hasattr(chunk, "content") and chunk.content:
-                        chunk_bridge.put({"type": "chunk", "content": chunk.content})
-                chunk_bridge.put(_SENTINEL)
-
-            loop.run_until_complete(_push_chunks())
-
-            while True:
-                item = chunk_bridge.get()
-                if item is _SENTINEL:
-                    break
-                yield item
+            # 原生 async for 逐块流式 yield，实现打字机效果
+            async for chunk in self.medical_assistant.stream_final_report(
+                context=context,
+                proposal=proposal_truncated,
+                critique=critique_truncated,
+                evidence=evidence,
+                all_info=all_info,
+                report_mode=report_mode
+            ):
+                if isinstance(chunk, str) and chunk:
+                    yield {"type": "chunk", "content": chunk}
+                elif hasattr(chunk, "content") and chunk.content:
+                    yield {"type": "chunk", "content": chunk.content}
 
             if show_thinking:
                 yield self._emit_thinking("Done", "✅ 全部完成", "临床推理管线执行完毕")
@@ -515,21 +500,18 @@ class qwenAgent:
             logger.error(f"=== 临床推理管线异常 | {format_error_log(e)} ===")
             # 构造结构化错误事件（双写 content 字段保持旧前端兼容）
             yield build_error_event(e, talk_id=None)
-        finally:
-            if loop:
-                loop.close()
 
-    def run_clinical_reasoning(
+    async def run_clinical_reasoning(
             self,
             case_text: str,
             all_info: str = "",
             report_mode: str = "emergency",
             show_thinking: bool = True
-    ) -> Generator[dict, None, None]:
+    ) -> AsyncGenerator[dict, None]:
         """
-        对外接口：在内部推理管线基础上套一层 TokenAggregator，
+        对外接口：纯异步生成器，在内部推理管线基础上套一层 TokenAggregator，
         将高频 thinking token 聚合后再发出，降低 SSE 事件频率。
-        result/meta/error/done 事件不经过聚合，直接透传保证实时性。
+        result/meta/chunk/error 事件不经过聚合，直接透传保证实时性。
 
         聚合策略：
         - 连续 thinking 事件的 content 合并，元数据（step/title）保留第一个 chunk 的值
@@ -540,7 +522,7 @@ class qwenAgent:
         # 记录当前批次第一个 thinking 事件的元数据（step/title），聚合后继承这份元数据
         first_chunk_meta: Optional[dict] = None
 
-        for event in self._run_clinical_reasoning_core(case_text, all_info, report_mode, show_thinking):
+        async for event in self._run_clinical_reasoning_core(case_text, all_info, report_mode, show_thinking):
             if not isinstance(event, dict):
                 yield event
                 continue
@@ -555,7 +537,7 @@ class qwenAgent:
                     yield {**first_chunk_meta, "content": merged}
                     first_chunk_meta = None   # 重置，下批次从新的第一个 chunk 取元数据
             else:
-                # 非 thinking 事件（result/meta/error/done）前，先 flush 剩余 thinking 内容
+                # 非 thinking 事件（result/chunk/meta/error）前，先 flush 剩余 thinking 内容
                 flushed = aggregator.flush()
                 if flushed is not None and first_chunk_meta is not None:
                     yield {**first_chunk_meta, "content": flushed}
@@ -608,7 +590,7 @@ class qwenAgent:
         "需查证的中文临床问题3"
     ],
     "user_questions": [
-        "如果输入中包含“请回答以下问题：”或类似明确的问题列表，请将每个问题原文提取出来；若没有，则返回空列表"
+        "如果输入中包含"请回答以下问题："或类似明确的问题列表，请将每个问题原文提取出来；若没有，则返回空列表"
     ]
 }}
 
@@ -616,7 +598,7 @@ class qwenAgent:
 - structured_context: 提取所有临床信息
 - complexity: critical=危及生命
 - clinical_questions: 3个最需要查证的问题，用于检索医学文献，必须用中文
-- user_questions: 若输入中用户明确提出了若干具体问题（例如以“请回答以下问题：”引导的列表），请将每个问题原文提取为字符串数组；若无，则返回空数组。"""
+- user_questions: 若输入中用户明确提出了若干具体问题（例如以"请回答以下问题："引导的列表），请将每个问题原文提取为字符串数组；若无，则返回空数组。"""
 
         response = await self.llm_critic.ainvoke([HumanMessage(content=prompt)])
         result = self._parse_json(response.content, None)
@@ -745,16 +727,12 @@ class qwenAgent:
         return final_answer, critic_text
 
     # ===== [PATCH] /ai/analyze 对齐方法（仅此方法语义收紧）=====
-    def analyze_patient_risk(self, patient_data: str, all_info: str = "") -> Dict[str, str]:
-        """面向 /ai/analyze 的稳定输出：riskLevel / suggestion / analysisDetails"""
-        loop = None
+    async def analyze_patient_risk(self, patient_data: str, all_info: str = "") -> Dict[str, str]:
+        """面向 /ai/analyze 的稳定输出：riskLevel / suggestion / analysisDetails（纯异步，无独立事件循环）"""
         try:
             logger.info("[AIAnalyze] start | patient_data_len=%d | all_info_len=%d", len(patient_data or ""), len(all_info or ""))
 
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-            analysis = loop.run_until_complete(self._unified_analysis(patient_data, all_info))
+            analysis = await self._unified_analysis(patient_data, all_info)
             context = analysis.get("structured_context", {"原始病例": patient_data})
             complexity = str(analysis.get("complexity", "high")).lower()
             key_risks = analysis.get("key_risks", []) or []
@@ -768,7 +746,7 @@ class qwenAgent:
             )
             logger.info("[AIAnalyze] prompt_ready | prompt_len=%d", len(prompt))
 
-            response = loop.run_until_complete(self.llm_critic.ainvoke([HumanMessage(content=prompt)]))
+            response = await self.llm_critic.ainvoke([HumanMessage(content=prompt)])
             result = self._parse_json(getattr(response, "content", ""), {}) or {}
 
             default_risk_level = {
@@ -791,7 +769,7 @@ class qwenAgent:
             }[default_risk_level]
 
             risk_level = result.get("riskLevel", default_risk_level)
-            # 兼容偶发返回“高/中/低”
+            # 兼容偶发返回"高/中/低"
             normalize_map = {"高": "高风险", "中": "中风险", "低": "低风险"}
             risk_level = normalize_map.get(risk_level, risk_level)
             if risk_level not in {"低风险", "中风险", "高风险"}:
@@ -812,9 +790,6 @@ class qwenAgent:
                 "suggestion": "建议结合线下检查结果进一步评估，如症状加重请及时就医。",
                 "analysisDetails": "系统已完成基础风险评估，但详细分析生成失败，请结合临床实际判断。"
             }
-        finally:
-            if loop:
-                loop.close()
 
     def _is_multi_mcq(self, text: str) -> bool:
         return len(re.findall(r"(?:^|\n)\s*[A-D][\.\、\):：]\s+", text)) >= 2
@@ -879,7 +854,7 @@ class qwenAgent:
     async def _classify_multi_mcq_with_llm(self, text: str) -> Dict[str, Any]:
         if not text or len(text.strip()) < 8:
             return {"is_multi_mcq": False, "question_type": "unknown", "reason": "empty"}
-        prompt = f"""你是任务识别器。请判断输入是否为“包含2道及以上选择题”的试题文本，并判断题型。
+        prompt = f"""你是任务识别器。请判断输入是否为"包含2道及以上选择题"的试题文本，并判断题型。
 
 输入：
 
@@ -896,7 +871,7 @@ class qwenAgent:
 判定标准：
 1) 选择题需有候选项（A/B/C/D等）
 2) 至少2道题才算 multi
-3) 若出现“多选/可多选/选出所有正确项”等，优先判为 multiple 或 mixed
+3) 若出现"多选/可多选/选出所有正确项"等，优先判为 multiple 或 mixed
 4) 问诊/知识问答/非试题返回 false
 """
         try:
@@ -923,7 +898,7 @@ class qwenAgent:
 {{"question_type":"single/multiple","reason":"一句话"}}
 
 规则：
-- 出现“多选/可多选/选出所有正确项/不止一个正确答案” => multiple
+- 出现"多选/可多选/选出所有正确项/不止一个正确答案" => multiple
 - 否则默认 single
 """
         try:

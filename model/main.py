@@ -4,7 +4,6 @@ import logging
 import sys
 import asyncio
 import concurrent.futures
-import itertools
 from contextlib import asynccontextmanager
 import os
 import json
@@ -25,16 +24,6 @@ from langchain_community.chat_models import ChatTongyi
 from utils.context_summary import ConversationSummaryService
 from error_codes import build_error_event, format_error_log
 
-# 队列事件优先级映射：数字越小越优先，确保 error/done 能快速排到队首被消费
-# heartbeat 直接 yield 不经过队列，此处仅作完整性定义
-_QUEUE_PRIORITY = {
-    "error":     0,
-    "done":      1,
-    "meta":      2,
-    "result":    3,
-    "thinking":  4,
-    "heartbeat": 5,
-}
 
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-here")
@@ -84,8 +73,8 @@ def init_all_resources():
     report_mgr = get_report_manager()
     logging.info(f">>> 可用报告模式: {report_mgr.list_modes()}")
 
-    llm_max = ChatTongyi(model_name="qwen-max")
-    llm_plus = ChatTongyi(model_name="qwen-plus")
+    llm_max = ChatTongyi(model_name="qwen-max", streaming=True)
+    llm_plus = ChatTongyi(model_name="qwen-plus", streaming=True)
     context_summary = ConversationSummaryService(
         llm=llm_plus,
         prompt_manager=prompt_mgr
@@ -169,70 +158,11 @@ async def get_model_result(request: QueryRequest):
             logging.info(f"请求show_thinking: {request.show_thinking}")
 
             loop = asyncio.get_running_loop()
-            # 有界优先级队列，maxsize=50 防止推理速度远超消费速度时内存无限增长
-            stream_queue = asyncio.PriorityQueue(maxsize=50)
-            # 单调递增序列号：仅在事件循环线程中调用，防止同优先级元素比较 dict 时 TypeError
-            seq_counter = itertools.count()
             final_answer_parts = []
 
-            def _item_priority(item) -> int:
-                """根据事件 type 字段查找优先级，None 哨兵按 done 级别处理"""
-                if item is None:
-                    return _QUEUE_PRIORITY["done"]
-                if isinstance(item, dict):
-                    return _QUEUE_PRIORITY.get(item.get("type", ""), 3)
-                return 3
-
-            async def enqueue(item, *, droppable: bool = False):
-                """
-                将事件放入优先级队列，元组格式 (priority, seq, item)。
-                droppable=True（thinking）：超时 30s 后丢弃，打印 warning。
-                droppable=False（error/done/meta/result）：永久阻塞等待，绝不丢弃。
-                """
-                priority = _item_priority(item)
-                seq = next(seq_counter)
-                entry = (priority, seq, item)
-                if droppable:
-                    try:
-                        await asyncio.wait_for(stream_queue.put(entry), timeout=30.0)
-                    except asyncio.TimeoutError:
-                        event_type = item.get("type", "unknown") if isinstance(item, dict) else "sentinel"
-                        logging.warning(f"队列已满超时 30s，丢弃低优先级事件: type={event_type}")
-                else:
-                    # error/done/meta/result：阻塞等待空位，不受超时限制
-                    await stream_queue.put(entry)
-
-            def run_stream_in_thread():
-                try:
-                    for chunk in resources["model"].run_clinical_reasoning(
-                        case_text=request.question,
-                        all_info=request.all_info,
-                        report_mode=request.report_mode,
-                        show_thinking=request.show_thinking
-                    ):
-                        # thinking 事件可丢弃，其余事件不可丢弃
-                        chunk_type = chunk.get("type", "") if isinstance(chunk, dict) else ""
-                        droppable = chunk_type == "thinking"
-                        asyncio.run_coroutine_threadsafe(
-                            enqueue(chunk, droppable=droppable), loop
-                        )
-                except Exception as e:
-                    # 记录含完整堆栈的错误日志
-                    logging.error(f"模型流式生成出错 | {format_error_log(e)}")
-                    # error 事件不可丢弃
-                    asyncio.run_coroutine_threadsafe(
-                        enqueue(build_error_event(e, talk_id=None), droppable=False), loop
-                    )
-                finally:
-                    # None 哨兵（done 信号）不可丢弃
-                    asyncio.run_coroutine_threadsafe(
-                        enqueue(None, droppable=False), loop
-                    )
-
-            loop.run_in_executor(resources["executor"], run_stream_in_thread)
-
+            # 并行启动命名任务（首轮对话时生成会话标题，sync 函数放入线程池）
             naming_future = None
-            if not request.all_info:
+            if not request.all_info and resources.get("naming_model"):
                 naming_future = loop.run_in_executor(
                     resources["executor"],
                     resources["naming_model"].run_naming,
@@ -240,98 +170,67 @@ async def get_model_result(request: QueryRequest):
                 )
 
             generated_name = None
+
+            # 直接迭代异步生成器
+            # 心跳用 asyncio.wait({task}, timeout) 而非 wait_for：
+            # wait_for 超时会取消 task 并向 generator 注入 CancelledError，导致 generator 损坏；
+            # asyncio.wait 超时只是"还没好"，task 继续运行，下次循环复用同一个 task。
+            async_gen = resources["model"].run_clinical_reasoning(
+                case_text=request.question,
+                all_info=request.all_info,
+                report_mode=request.report_mode,
+                show_thinking=request.show_thinking
+            )
+
+            pending_task = None
             while True:
-                # 等待队列数据，超时 10s 则发送心跳 comment 保活连接，不终止循环
-                # 解包优先级元组 (priority, seq, item)，priority/seq 仅用于队列排序，消费时丢弃
-                try:
-                    _, _, item = await asyncio.wait_for(stream_queue.get(), timeout=10.0)
-                except asyncio.TimeoutError:
-                    logging.debug("Queue 空闲超时，发送 SSE 心跳事件")
+                if pending_task is None:
+                    pending_task = asyncio.ensure_future(async_gen.__anext__())
+
+                done, _ = await asyncio.wait({pending_task}, timeout=10.0)
+
+                if not done:
+                    # 超时：发心跳，task 继续在后台等 LLM，下次循环复用
+                    logging.debug("异步流空闲超时，发送 SSE 心跳事件")
                     yield json.dumps({"type": "heartbeat", "talkId": None}, ensure_ascii=False) + "\n"
                     continue
 
-                if item is None:
-                    if not generated_name and resources.get("naming_model"):
-                        try:
-                            generated_name = await loop.run_in_executor(
-                                resources["executor"],
-                                resources["naming_model"].run_naming,
-                                request.question
-                            )
-                        except Exception:
-                            generated_name = "咨询"
-
-                    answer_text = "".join(final_answer_parts).strip()
-                    updated_summary = request.all_info
-                    summary_meta = {
-                        "score": 0.0,
-                        "is_valuable": False,
-                        "reason": "no final answer",
-                        "summary": updated_summary,
-                        "all_info": updated_summary
-                    }
-
-                    if answer_text and resources.get("context_summary"):
-                        try:
-                            summary_result = await loop.run_in_executor(
-                                resources["executor"],
-                                resources["context_summary"].update_all_info,
-                                request.all_info,
-                                request.question,
-                                answer_text,
-                                0.4
-                            )
-                            updated_summary = summary_result.get("updated_all_info", request.all_info)
-                            summary_meta = {
-                                "score": summary_result.get("score", 0.0),
-                                "is_valuable": summary_result.get("is_valuable", False),
-                                "reason": summary_result.get("reason", ""),
-                                "summary": updated_summary,
-                                "all_info": updated_summary
-                            }
-                        except Exception as summary_error:
-                            logging.error(f"all_info 更新失败: {summary_error}")
-                            summary_meta["reason"] = f"summary failed: {summary_error}"
-
-                    final_name = generated_name or "咨询"
-                    summary_meta["name"] = final_name
-
-                    # 标准格式：meta 事件携带 all_info 更新信息
-                    yield json.dumps({"type": "meta", "content": {"all_info_update": summary_meta}}, ensure_ascii=False) + "\n"
-                    # done 事件：标志流结束，携带汇总信息
-                    yield json.dumps({
-                        "type": "done",
-                        "content": "",
-                        "result": answer_text,
-                        "summary": updated_summary,
-                        "name": final_name,
-                        "all_info": updated_summary
-                    }, ensure_ascii=False) + "\n"
+                # task 已完成，取结果并重置，下次循环创建新 task
+                pending_task = None
+                try:
+                    event = done.pop().result()
+                except StopAsyncIteration:
                     break
+                except Exception as e:
+                    yield json.dumps(build_error_event(e, talk_id=None), ensure_ascii=False) + "\n"
+                    return
 
-                if isinstance(item, dict) and item.get("type") == "error":
-                    # 透传完整结构化错误事件（含 error 对象和双写的 content 字段）
-                    yield json.dumps(item, ensure_ascii=False) + "\n"
-                    break
+                if not isinstance(event, dict):
+                    continue
 
+                # 顺带检查命名任务是否已完成
                 if naming_future and naming_future.done() and not generated_name:
                     try:
                         generated_name = naming_future.result()
                     except Exception:
                         generated_name = "咨询"
 
-                chunk_type = item.get("type", "") if isinstance(item, dict) else ""
+                chunk_type = event.get("type", "")
 
-                # 直接透传 Agent 标准格式事件
-                if chunk_type == "chunk":
+                if chunk_type == "error":
+                    # 透传完整结构化错误事件后终止流
+                    yield json.dumps(event, ensure_ascii=False) + "\n"
+                    return
+
+                elif chunk_type == "chunk":
                     # 打字机效果：逐块转发，同时累计到 final_answer_parts
-                    content_str = str(item.get("content", ""))
+                    content_str = str(event.get("content", ""))
                     if content_str:
                         final_answer_parts.append(content_str)
                         yield json.dumps({"type": "chunk", "content": content_str}, ensure_ascii=False) + "\n"
 
                 elif chunk_type == "result":
-                    content = item["content"]
+                    content = event["content"]
                     if hasattr(content, "content"):
                         content = content.content
                     content_str = str(content)
@@ -341,13 +240,67 @@ async def get_model_result(request: QueryRequest):
                 elif chunk_type == "thinking":
                     yield json.dumps({
                         "type": "thinking",
-                        "step": item.get("step", ""),
-                        "title": item.get("title", ""),
-                        "content": str(item.get("content", ""))
+                        "step": event.get("step", ""),
+                        "title": event.get("title", ""),
+                        "content": str(event.get("content", ""))
                     }, ensure_ascii=False) + "\n"
 
                 elif chunk_type == "meta":
-                    yield json.dumps({"type": "meta", "content": item["content"]}, ensure_ascii=False) + "\n"
+                    yield json.dumps({"type": "meta", "content": event["content"]}, ensure_ascii=False) + "\n"
+
+            # 流正常结束：等待命名任务，然后生成 meta + done
+            if not generated_name and naming_future:
+                try:
+                    generated_name = await naming_future
+                except Exception:
+                    generated_name = "咨询"
+            generated_name = generated_name or "咨询"
+
+            answer_text = "".join(final_answer_parts).strip()
+            updated_summary = request.all_info
+            summary_meta = {
+                "score": 0.0,
+                "is_valuable": False,
+                "reason": "no final answer",
+                "summary": updated_summary,
+                "all_info": updated_summary
+            }
+
+            if answer_text and resources.get("context_summary"):
+                try:
+                    summary_result = await loop.run_in_executor(
+                        resources["executor"],
+                        resources["context_summary"].update_all_info,
+                        request.all_info,
+                        request.question,
+                        answer_text,
+                        0.4
+                    )
+                    updated_summary = summary_result.get("updated_all_info", request.all_info)
+                    summary_meta = {
+                        "score": summary_result.get("score", 0.0),
+                        "is_valuable": summary_result.get("is_valuable", False),
+                        "reason": summary_result.get("reason", ""),
+                        "summary": updated_summary,
+                        "all_info": updated_summary
+                    }
+                except Exception as summary_error:
+                    logging.error(f"all_info 更新失败: {summary_error}")
+                    summary_meta["reason"] = f"summary failed: {summary_error}"
+
+            summary_meta["name"] = generated_name
+
+            # 标准格式：meta 事件携带 all_info 更新信息
+            yield json.dumps({"type": "meta", "content": {"all_info_update": summary_meta}}, ensure_ascii=False) + "\n"
+            # done 事件：标志流结束，携带汇总信息
+            yield json.dumps({
+                "type": "done",
+                "content": "",
+                "result": answer_text,
+                "summary": updated_summary,
+                "name": generated_name,
+                "all_info": updated_summary
+            }, ensure_ascii=False) + "\n"
 
         except Exception as e:
             # 记录含完整堆栈的错误日志
@@ -382,13 +335,8 @@ async def analyze_patient_health_risk(request: AnalyzeRequest):
     logging.info(f"data: {patient_text[:200]}")
     logging.info(f"all_info: {request.all_info[:200] if request.all_info else ''}")
 
-    loop = asyncio.get_running_loop()
-    result = await loop.run_in_executor(
-        resources["executor"],
-        resources["model"].analyze_patient_risk,
-        patient_text,
-        request.all_info
-    )
+    # analyze_patient_risk 已改为纯异步方法，直接 await
+    result = await resources["model"].analyze_patient_risk(patient_text, request.all_info)
 
     return {
         "code": 1,

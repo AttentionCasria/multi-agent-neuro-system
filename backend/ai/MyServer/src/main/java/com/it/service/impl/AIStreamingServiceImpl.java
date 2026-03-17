@@ -447,7 +447,16 @@ public class AIStreamingServiceImpl implements AIStreamingService {
                 return Flux.just(objectMapper.writeValueAsString(thinkingResp));
             }
 
-            // result 事件：追加到完整答案，透传内容给前端
+            // chunk 事件：流式报告片段（打字机效果），追加全文并直接转发前端
+            if ("chunk".equalsIgnoreCase(type)) {
+                String chunkContent = json.path("content").asText("");
+                fullAnswer.append(chunkContent);
+                Map<String, Object> chunkResp = baseResponse(talkId, generatedTitle[0], "chunk");
+                chunkResp.put("content", chunkContent);
+                return Flux.just(objectMapper.writeValueAsString(chunkResp));
+            }
+
+            // result 事件：非流式完整答案（irrelevant/knowledge 路径），追加全文并转发前端
             if ("result".equalsIgnoreCase(type)) {
                 String chunk = json.path("content").asText("");
                 fullAnswer.append(chunk);
