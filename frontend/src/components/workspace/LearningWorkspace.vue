@@ -74,16 +74,12 @@ async function loadPdfDocuments() {
   pdfError.value = ''
   try {
     const res = await getDocumentsAPI()
-    if (res.data.code === 1) {
-      pdfDocuments.value = res.data.data || {}
-      // 默认选中第一个分类
-      const categories = Object.keys(pdfDocuments.value)
-      if (categories.length) activeCategory.value = categories[0]
-    } else {
-      pdfError.value = res.data.msg || '加载失败'
-    }
+    pdfDocuments.value = res.data || {}
+    // 默认选中第一个分类
+    const categories = Object.keys(pdfDocuments.value)
+    if (categories.length) activeCategory.value = categories[0]
   } catch (e) {
-    pdfError.value = '网络错误，请稍后重试'
+    pdfError.value = e?.msg || '网络错误，请稍后重试'
   } finally {
     pdfLoading.value = false
   }
@@ -93,15 +89,10 @@ async function openPreview(doc) {
   pdfPreview.value = { visible: true, url: '', downloadUrl: '', fileName: doc.name, loading: true }
   try {
     const res = await getDocumentUrlAPI(doc.id)
-    if (res.data.code === 1) {
-      pdfPreview.value.url = res.data.data.previewUrl
-      pdfPreview.value.downloadUrl = res.data.data.downloadUrl
-    } else {
-      alert('获取预览链接失败：' + (res.data.msg || '未知错误'))
-      pdfPreview.value.visible = false
-    }
-  } catch {
-    alert('网络错误，无法获取预览链接')
+    pdfPreview.value.url = res.data.previewUrl
+    pdfPreview.value.downloadUrl = res.data.downloadUrl
+  } catch (e) {
+    alert(e?.msg ? '获取预览链接失败：' + e.msg : '网络错误，无法获取预览链接')
     pdfPreview.value.visible = false
   } finally {
     pdfPreview.value.loading = false
@@ -111,13 +102,9 @@ async function openPreview(doc) {
 async function downloadDoc(doc) {
   try {
     const res = await getDocumentUrlAPI(doc.id)
-    if (res.data.code === 1) {
-      window.open(res.data.data.downloadUrl, '_blank')
-    } else {
-      alert('获取下载链接失败：' + (res.data.msg || '未知错误'))
-    }
-  } catch {
-    alert('网络错误，无法获取下载链接')
+    window.open(res.data.downloadUrl, '_blank')
+  } catch (e) {
+    alert(e?.msg ? '获取下载链接失败：' + e.msg : '网络错误，无法获取下载链接')
   }
 }
 

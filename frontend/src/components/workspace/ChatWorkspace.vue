@@ -163,17 +163,13 @@ async function openRefPopup(name) {
 
   try {
     const res = await matchDocumentAPI(name)
-    if (res.data.code === 1) {
-      const { previewUrl, downloadUrl } = res.data.data
-      // 写入缓存，30 分钟后自动清除
-      refUrlCache.set(name, { previewUrl, downloadUrl })
-      setTimeout(() => refUrlCache.delete(name), 30 * 60 * 1000)
-      refPopup.value = { ...refPopup.value, previewUrl, downloadUrl, loading: false }
-    } else {
-      refPopup.value = { ...refPopup.value, loading: false, error: '未找到对应文档' }
-    }
-  } catch {
-    refPopup.value = { ...refPopup.value, loading: false, error: '网络错误，请稍后重试' }
+    const { previewUrl, downloadUrl } = res.data
+    // 写入缓存，30 分钟后自动清除
+    refUrlCache.set(name, { previewUrl, downloadUrl })
+    setTimeout(() => refUrlCache.delete(name), 30 * 60 * 1000)
+    refPopup.value = { ...refPopup.value, previewUrl, downloadUrl, loading: false }
+  } catch (e) {
+    refPopup.value = { ...refPopup.value, loading: false, error: e?.msg ? '获取文献失败：' + e.msg : '网络错误，请稍后重试' }
   }
 }
 
