@@ -10,6 +10,7 @@ import PdfPreviewModal from '@/components/PdfPreviewModal.vue'
 import { injectRefLinks } from '@/utils/referenceParser'
 import { matchDocumentAPI } from '@/api/documents'
 import { compressImage } from '@/utils/imageCompress'
+import AttachFileSVG from '../svg/AttachFileSVG.vue'
 
 defineOptions({ name: 'ChatWorkspace' })
 
@@ -514,29 +515,19 @@ function getThinkingData(msgIndex) {
               <template v-if="index % 2 === 0">
                 <!-- 图片缩略图（有图时显示，点击放大） -->
                 <div v-if="msgImages(msg).length" class="msg-image-list">
-                  <img
-                    v-for="(imgUrl, i) in msgImages(msg)"
-                    :key="i"
-                    :src="imgUrl"
-                    class="msg-image-thumb"
-                    alt="上传图片"
-                    @click="previewMsgImage(imgUrl)"
-                  />
+                  <img v-for="(imgUrl, i) in msgImages(msg)" :key="i" :src="imgUrl" class="msg-image-thumb" alt="上传图片"
+                    @click="previewMsgImage(imgUrl)" />
                 </div>
                 <div class="plain-text">{{ msgText(msg) }}</div>
               </template>
               <template v-else>
                 <!-- ThinkingPanel：有思考记录时显示 DeepSeek 风格思考面板 -->
-                <ThinkingPanel
-                  v-if="getThinkingData(index)"
-                  :thinking-data="getThinkingData(index)"
-                  :is-streaming="isThinking && index === currentTalkList.length - 1"
-                />
+                <ThinkingPanel v-if="getThinkingData(index)" :thinking-data="getThinkingData(index)"
+                  :is-streaming="isThinking && index === currentTalkList.length - 1" />
                 <!-- 降级 fallback：无思考记录时显示旧版弹跳点（兼容历史消息） -->
                 <div
                   v-if="!msgText(msg) && isThinking && index === currentTalkList.length - 1 && !getThinkingData(index)"
-                  class="thinking-indicator"
-                >
+                  class="thinking-indicator">
                   <span class="thinking-dots">
                     <span></span><span></span><span></span>
                   </span>
@@ -549,11 +540,9 @@ function getThinkingData(msgIndex) {
                   现在 renderedHtmlList 由 flushRender 以 ~90ms 节流更新，
                   渲染频率从"每字符一次"降低到"每 90ms 至多一次"，彻底消除 Layout Thrashing。
                 -->
-                <div
-                  class="markdown-body"
+                <div class="markdown-body"
                   :class="{ 'streaming-active': isStreaming && index === currentTalkList.length - 1 }"
-                  v-html="renderedHtmlList[index] || ''"
-                ></div>
+                  v-html="renderedHtmlList[index] || ''"></div>
               </template>
             </div>
           </article>
@@ -573,28 +562,19 @@ function getThinkingData(msgIndex) {
         </div>
         <div class="input-row">
           <!-- 隐藏文件选择器 -->
-          <input
-            ref="fileInputRef"
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            multiple
-            style="display:none"
-            @change="handleImageSelect"
-          />
-          <!-- 📎 上传图片按钮 -->
-          <button
-            type="button"
-            class="attach-btn"
-            :disabled="imageList.length >= 3 || isStreaming"
-            title="上传图片（最多3张）"
-            @click="fileInputRef.click()"
-          >📎</button>
+          <input ref="fileInputRef" type="file" accept="image/jpeg,image/png,image/webp" multiple style="display:none"
+            @change="handleImageSelect" />
+
           <textarea ref="inputRef" v-model="draftMessage" rows="1"
-            :placeholder="imageList.length ? '可补充文字描述（直接发送将询问图片内容）' : '请输入症状、病史或希望AI分析的问题'"
-            @input="autoResize"
+            :placeholder="imageList.length ? '可补充文字描述（直接发送将询问图片内容）' : '请输入症状、病史或希望AI分析的问题'" @input="autoResize"
             @keydown.enter.exact.prevent="handleSendMessage" />
-          <button type="button" class="send-btn"
-            :disabled="(!draftMessage.trim() && !imageList.length) || isStreaming"
+
+          <!-- 📎 上传图片按钮 -->
+          <button type="button" class="attach-btn" :disabled="imageList.length >= 3 || isStreaming" title="上传图片（最多3张）"
+            @click="fileInputRef.click()">
+            <AttachFileSVG size="24" color="currentColor" />
+          </button>
+          <button type="button" class="send-btn" :disabled="(!draftMessage.trim() && !imageList.length) || isStreaming"
             @click="handleSendMessage">
             <SendSVG size="24" color="currentColor" />
           </button>
@@ -610,7 +590,8 @@ function getThinkingData(msgIndex) {
           <div v-if="refPopup.loading" class="ref-popup-status">匹配中...</div>
           <div v-else-if="refPopup.error" class="ref-popup-status error">{{ refPopup.error }}</div>
           <div v-else class="ref-popup-actions">
-            <button type="button" class="primary-action" style="width:auto;margin:0" @click="openPdfPreview">在线预览</button>
+            <button type="button" class="primary-action" style="width:auto;margin:0"
+              @click="openPdfPreview">在线预览</button>
             <button type="button" class="secondary-action" @click="downloadRef">下载</button>
           </div>
           <button type="button" class="ref-popup-close" @click="refPopup.visible = false">×</button>
@@ -619,13 +600,8 @@ function getThinkingData(msgIndex) {
     </Teleport>
 
     <!-- ── PDF 预览弹窗（复用 PdfPreviewModal） ──────── -->
-    <PdfPreviewModal
-      :visible="pdfPreviewState.visible"
-      :url="pdfPreviewState.url"
-      :file-name="pdfPreviewState.fileName"
-      :download-url="pdfPreviewState.downloadUrl"
-      @close="pdfPreviewState.visible = false"
-    />
+    <PdfPreviewModal :visible="pdfPreviewState.visible" :url="pdfPreviewState.url" :file-name="pdfPreviewState.fileName"
+      :download-url="pdfPreviewState.downloadUrl" @close="pdfPreviewState.visible = false" />
 
     <!-- 图片放大预览 -->
     <Teleport to="body">
@@ -921,7 +897,10 @@ function getThinkingData(msgIndex) {
 }
 
 @keyframes thinking-bounce {
-  0%, 80%, 100% {
+
+  0%,
+  80%,
+  100% {
     transform: scale(0.55);
     opacity: 0.35;
   }
@@ -1036,7 +1015,9 @@ function getThinkingData(msgIndex) {
   font-size: 14px;
   color: #6b7280;
 
-  &.error { color: #dc2626; }
+  &.error {
+    color: #dc2626;
+  }
 }
 
 .ref-popup-actions {
@@ -1055,7 +1036,9 @@ function getThinkingData(msgIndex) {
   cursor: pointer;
   line-height: 1;
 
-  &:hover { color: #374151; }
+  &:hover {
+    color: #374151;
+  }
 }
 
 /* ─────────────────── Input box ─────────────────── */
@@ -1116,15 +1099,15 @@ function getThinkingData(msgIndex) {
 /* 输入行：📎 + textarea + 发送按钮 */
 .input-row {
   display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) 42px;
+  grid-template-columns: minmax(0, 1fr) 48px 48px;
   gap: 8px;
-  align-items: end;
+  align-items: start;
 
   textarea {
     border: none;
     outline: none;
     resize: none;
-    min-height: 36px;
+    min-height: 48px;
     max-height: 180px;
     background: transparent;
     line-height: 1.6;
@@ -1132,6 +1115,7 @@ function getThinkingData(msgIndex) {
     color: var(--color-text-strong);
     box-sizing: border-box;
     width: 100%;
+    padding: 12px 0 12px 12px;
   }
 }
 
@@ -1149,14 +1133,14 @@ function getThinkingData(msgIndex) {
   object-fit: cover;
   border-radius: 6px;
   cursor: zoom-in;
-  border: 1px solid rgba(255,255,255,0.3);
+  border: 1px solid rgba(255, 255, 255, 0.3);
 }
 
 /* 图片放大预览遮罩 */
 .img-preview-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.85);
+  background: rgba(0, 0, 0, 0.85);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1185,8 +1169,8 @@ function getThinkingData(msgIndex) {
 }
 
 .attach-btn {
-  width: 36px;
-  height: 36px;
+  width: 48px;
+  height: 48px;
   font-size: 18px;
   background: transparent;
   border: none;
@@ -1195,15 +1179,30 @@ function getThinkingData(msgIndex) {
   display: flex;
   align-items: center;
   justify-content: center;
-  opacity: 0.7;
-  &:hover { opacity: 1; }
-  &:disabled { opacity: 0.3; cursor: not-allowed; }
+  color: var(--color-text-medium);
+  opacity: 0.8;
+  border-radius: 50%;
+
+  &:hover {
+    opacity: 1;
+    background: rgba(0, 0, 0, 0.05);
+  }
+
+  &:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
 }
 
 .send-btn {
   width: 48px;
   height: 48px;
-  color: var(--color-primary);
+  color: var(--color-primary-dark);
+  border-radius: 50%;
+
+  &:hover {
+    background: rgba(17, 150, 127, 0.1);
+  }
 }
 
 /* ─────────────────── Sync panel internals ─────────────────── */
@@ -1302,8 +1301,15 @@ function getThinkingData(msgIndex) {
 }
 
 @keyframes streaming-blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0;
+  }
 }
 
 .streaming-active {
@@ -1311,8 +1317,13 @@ function getThinkingData(msgIndex) {
 }
 
 @keyframes streaming-fadein {
-  from { opacity: 0.35; }
-  to { opacity: 1; }
+  from {
+    opacity: 0.35;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 /* ─────────────────── Markdown body ─────────────────── */
