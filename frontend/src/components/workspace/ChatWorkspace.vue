@@ -740,6 +740,7 @@ function getThinkingData(msgIndex) {
           <p>{{ syncResult.aiOpinion.suggestion }}</p>
           <small>{{ formatDateTime(syncResult.aiOpinion.lastUpdatedAt) }}</small>
         </div>
+
       </div>
     </aside>
   </section>

@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 import uvicorn
 
 from Agent.qwen.qwen_agent import qwenAgent
+from services.pubmed_service import PubMedService
 from Agent.qwen.qwen_assistant import MedicalAssistant
 from utils.naming_model import NamingModel
 from makeData.Retrieve import UnifiedSearchEngine, CONFIG
@@ -385,6 +386,31 @@ async def analyze_patient_health_risk(request: AnalyzeRequest):
         "msg": "success",
         "data": result
     }
+
+
+class PubMedSearchRequest(BaseModel):
+    query: str
+    max_results: int = 5
+
+
+@app.post("/model/pubmed/search")
+async def pubmed_search(request: PubMedSearchRequest):
+    """
+    PubMed 独立检索接口，供「医生学习 - 学习资料」板块调用。
+    与 AI 问答管线解耦，直接返回 JSON，不走 SSE 流。
+    """
+    query = request.query.strip()
+    if not query:
+        return {"code": 1, "msg": "success", "data": {"papers": []}}
+
+    svc = PubMedService()
+    try:
+        papers = await svc.search_papers(query, max_results=request.max_results)
+    except Exception as e:
+        logging.error(f"PubMed 检索失败: {e}")
+        papers = []
+
+    return {"code": 1, "msg": "success", "data": {"papers": papers}}
 
 
 @app.post("/admin/reload_config")

@@ -1,7 +1,9 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import PdfPreviewModal from '@/components/PdfPreviewModal.vue'
+import PapersSidebar from './PapersSidebar.vue'
 import { getDocumentsAPI, getDocumentUrlAPI } from '@/api/documents'
+import { searchPubMedAPI } from '@/api/learning'
 
 defineOptions({ name: 'LearningWorkspace' })
 
@@ -45,8 +47,8 @@ function shortText(value, fallback = '暂无内容') {
   return text || fallback
 }
 
-// ── 顶部视图切换：学习资料 | PDF文档库 ────────────────────────────────
-const activeView = ref('materials')   // 'materials' | 'pdfs'
+// ── 顶部视图切换：PDF文档库 | PubMed文献 ────────────────────────────────
+const activeView = ref('pdfs')   // 'pdfs' | 'pubmed'
 
 // ── PDF 文档库状态（自管理，不走父组件 props） ─────────────────────────
 const pdfLoading = ref(false)
@@ -116,6 +118,35 @@ function switchView(view) {
   }
 }
 
+// 默认视图是 pdfs，组件挂载时直接加载
+onMounted(() => {
+  loadPdfDocuments()
+})
+
+// ── PubMed 文献检索状态（自管理） ────────────────────────────────────
+const pubmedQuery = ref('')
+const pubmedLoading = ref(false)
+const pubmedError = ref('')
+const pubmedPapers = ref([])
+const pubmedSearched = ref(false)  // 是否已执行过一次搜索
+
+async function handlePubMedSearch() {
+  const q = pubmedQuery.value.trim()
+  if (!q) return
+  pubmedLoading.value = true
+  pubmedError.value = ''
+  pubmedPapers.value = []
+  pubmedSearched.value = true
+  try {
+    const res = await searchPubMedAPI(q, 5)
+    pubmedPapers.value = res.data?.papers || []
+  } catch (e) {
+    pubmedError.value = e?.msg || '检索失败，请稍后重试'
+  } finally {
+    pubmedLoading.value = false
+  }
+}
+
 function formatSize(bytes) {
   if (bytes < 1024) return bytes + ' B'
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
@@ -130,95 +161,21 @@ function formatSize(bytes) {
       <button
         type="button"
         class="view-tab"
-        :class="{ active: activeView === 'materials' }"
-        @click="switchView('materials')"
-      >学习资料</button>
-      <button
-        type="button"
-        class="view-tab"
         :class="{ active: activeView === 'pdfs' }"
         @click="switchView('pdfs')"
       >PDF 文档库</button>
+      <button
+        type="button"
+        class="view-tab"
+        :class="{ active: activeView === 'pubmed' }"
+        @click="switchView('pubmed')"
+      >PubMed 文献</button>
     </div>
 
     <!-- ══════════════════════════════════════════════════════ -->
-    <!--  视图 A：学习资料（原有逻辑，保持不变）               -->
+    <!--  视图 A：PDF 文档库                                   -->
     <!-- ══════════════════════════════════════════════════════ -->
-    <template v-if="activeView === 'materials'">
-      <div class="material-list-card">
-        <div class="section-head">
-          <div>
-            <h3>学习资料列表</h3>
-            <p>按分类筛选医生学习资料，并查看详情。</p>
-          </div>
-        </div>
-
-        <form class="toolbar" @submit.prevent="emit('search')">
-          <input v-model="query.category" type="text" placeholder="例如：心血管疾病" />
-          <button type="submit" class="secondary-action">查询资料</button>
-        </form>
-
-        <div v-if="materialsLoading" class="empty-card">正在加载学习资料...</div>
-
-        <div v-else-if="materials.length" class="material-list">
-          <article v-for="material in materials" :key="material.id" class="material-item"
-            :class="{ active: material.id === selectedMaterialId }" @click="emit('select-material', material.id)">
-            <div class="material-head">
-              <h4>{{ material.title }}</h4>
-              <span class="type-badge">{{ material.type || '资料' }}</span>
-            </div>
-            <p>{{ shortText(material.url, '点击查看详情') }}</p>
-          </article>
-        </div>
-
-        <div v-else class="empty-card">暂无学习资料，请调整分类关键词后重试。</div>
-
-        <div class="pager">
-          <button type="button" class="secondary-action" :disabled="query.page <= 1"
-            @click="emit('page-change', -1)">上一页</button>
-          <span>第 {{ query.page }} / {{ materialPageCount }} 页，共 {{ learningTotal }} 条</span>
-          <button type="button" class="secondary-action" :disabled="query.page >= materialPageCount"
-            @click="emit('page-change', 1)">
-            下一页
-          </button>
-        </div>
-      </div>
-
-      <div class="material-detail-card">
-        <div class="section-head">
-          <div>
-            <h3>资料详情</h3>
-            <p>支持查看正文或打开外部资源链接。</p>
-          </div>
-        </div>
-
-        <div v-if="materialDetailLoading" class="empty-card">正在加载资料详情...</div>
-
-        <div v-else-if="materialDetail" class="detail-card accent">
-          <div class="detail-title-row">
-            <div>
-              <p class="summary-label">资料标题</p>
-              <h4>{{ materialDetail.title }}</h4>
-            </div>
-            <button v-if="materialDetail.url" type="button" class="secondary-action"
-              @click="emit('open-material-link', materialDetail.url)">
-              打开原文
-            </button>
-          </div>
-
-          <div class="material-content">
-            <p>{{ shortText(materialDetail.content, '该资料未返回正文，可通过原文链接查看。') }}</p>
-          </div>
-        </div>
-
-        <div v-else class="empty-card">从左侧选择一份资料后，这里会显示详情。</div>
-      </div>
-    </template>
-
-    <!-- ══════════════════════════════════════════════════════ -->
-    <!--  视图 B：PDF 文档库                                   -->
-    <!-- ══════════════════════════════════════════════════════ -->
-    <template v-else>
+    <template v-if="activeView === 'pdfs'">
       <div class="pdf-panel">
         <!-- 加载 / 错误状态 -->
         <div v-if="pdfLoading" class="empty-card">正在从文档库加载 PDF 列表...</div>
@@ -257,6 +214,39 @@ function formatSize(bytes) {
         </template>
 
         <div v-else class="empty-card">文档库暂无内容，请先完成 OSS 上传。</div>
+      </div>
+    </template>
+
+    <!-- ══════════════════════════════════════════════════════ -->
+    <!--  视图 C：PubMed 文献检索                             -->
+    <!-- ══════════════════════════════════════════════════════ -->
+    <template v-if="activeView === 'pubmed'">
+      <div class="pubmed-panel">
+        <div class="section-head">
+          <div>
+            <h3>PubMed 文献检索</h3>
+            <p>检索 PubMed 最新循证医学证据，支持英文关键词或 MeSH 术语。</p>
+          </div>
+        </div>
+
+        <form class="toolbar" @submit.prevent="handlePubMedSearch">
+          <input
+            v-model="pubmedQuery"
+            type="text"
+            placeholder="例如：acute ischemic stroke thrombolysis"
+          />
+          <button type="submit" class="secondary-action" :disabled="pubmedLoading">
+            {{ pubmedLoading ? '检索中...' : '检索' }}
+          </button>
+        </form>
+
+        <div v-if="pubmedError" class="empty-card error">{{ pubmedError }}</div>
+
+        <div v-else-if="pubmedLoading || pubmedSearched" class="pubmed-results">
+          <PapersSidebar :papers="pubmedPapers" :loading="pubmedLoading" />
+        </div>
+
+        <div v-else class="empty-card">输入关键词后点击检索，将从 PubMed 返回最相关的 5 篇文献。</div>
       </div>
     </template>
 
@@ -504,6 +494,21 @@ function formatSize(bytes) {
 
 /* ───────────────── Error state ───────────────── */
 .empty-card.error { color: #dc2626; }
+
+// ── PubMed 面板（占满两列，可滚动） ─────────────────────────────────
+.pubmed-panel {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--color-bg-base);
+  padding-bottom: 16px;
+}
+
+.pubmed-results {
+  padding: 0 16px;
+}
 
 @media (max-width: 1080px) {
   .learning-workspace {

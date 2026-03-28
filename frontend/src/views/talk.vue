@@ -810,7 +810,8 @@ function openPatientWorkspace(patientId) {
         :thinking-history-list="thinkingHistoryList"
         :chat-loading="chatLoading" :patients="patients" :sync-patient="syncPatient"
         :conversation-preview="conversationPreview" :can-sync-conversation="canSyncConversation"
-        :sync-result="syncResult" @select-talk="handleSelectTalk" @new-chat="handleNewChat"
+        :sync-result="syncResult"
+        @select-talk="handleSelectTalk" @new-chat="handleNewChat"
         @delete-chat="handleDeleteChat" @delete-all="handleDeleteAll" @send-message="handleSendMessage"
         @sync-conversation="handleSyncConversation" @open-patient-workspace="openPatientWorkspace" />
 
