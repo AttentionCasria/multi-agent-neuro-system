@@ -377,8 +377,8 @@ async def analyze_patient_health_risk(request: AnalyzeRequest):
     logging.info(f"data: {patient_text[:200]}")
     logging.info(f"all_info: {request.all_info[:200] if request.all_info else ''}")
 
-    # analyze_patient_risk 已改为纯异步方法，直接 await
-    result = await resources["model"].analyze_patient_risk(patient_text, request.all_info)
+    # 修改为调用新的快速专用函数（完全独立，不影响对话路径）
+    result = await resources["model"].analyze_patient_risk_fast(patient_text)
 
     return {
         "code": 1,

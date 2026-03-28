@@ -224,7 +224,7 @@ critic: |
       - 修正方向
 
     最后输出：
-    {"overall_risk": "...", "needs_revision": true/false, "critical_issues_count": 0}
+    {{"overall_risk": "...", "needs_revision": true/false, "critical_issues_count": 0}}
 
 revision: |
   你是三甲医院神经内科主任医师。
@@ -313,7 +313,7 @@ conversation_value_score: |
   - 0.0：无医学价值或与病情无关
 
   只输出 JSON：
-  {"score": 0.0, "reason": "一句话说明"}
+  {{"score": 0.0, "reason": "一句话说明"}}
 
 conversation_summary_merge: |
   你是病历摘要整理助手。

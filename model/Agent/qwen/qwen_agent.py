@@ -825,6 +825,68 @@ class qwenAgent:
                 "analysisDetails": "系统已完成基础风险评估，但详细分析生成失败，请结合临床实际判断。"
             }
 
+    async def analyze_patient_risk_fast(self, patient_data: str) -> Dict[str, str]:
+            """专用于 /ai/analyze 和未来 /ai/sync-talk 的极简快速风险评估
+            - 只调用一次 llm_fast
+            - 完全不使用 all_info / 历史上下文
+            - 提示词极简，速度优先
+            """
+            try:
+                logger.info("[AIAnalyzeFast] start | patient_data_len=%d", len(patient_data or ""))
+
+                prompt = f"""你是资深临床风险评估医生。请基于以下患者信息，快速给出健康风险结论。
+
+    患者信息：{patient_data}
+
+    请直接输出 JSON，不要任何解释、不要 markdown 代码块：
+
+    {{
+        "riskLevel": "低风险/中风险/高风险",
+        "suggestion": "一句到两句实用干预建议，不要写具体药物剂量",
+        "analysisDetails": "简要说明主要风险依据（控制在80字以内）"
+    }}
+
+    要求：
+    - riskLevel 必须是：低风险、中风险、高风险之一
+    - suggestion 简洁、可执行
+    - analysisDetails 聚焦关键症状和已知病史，不要给出明确诊断"""
+
+                from langchain_community.chat_models import ChatTongyi
+                llm_fast_temp = ChatTongyi(
+                    model_name="qwen-plus",
+                    temperature=0.1,  # 风险评估需要更确定的输出
+                    streaming=False  # 同步接口通常不需要流式，直接拿 JSON
+                )
+
+                response = await llm_fast_temp.ainvoke(
+                    [HumanMessage(content=prompt)]
+                )
+
+                result = self._parse_json(getattr(response, "content", ""), {}) or {}
+
+                # 兜底保证接口稳定
+                payload = {
+                    "riskLevel": result.get("riskLevel", "中风险"),
+                    "suggestion": result.get("suggestion", "建议结合临床检查进一步评估，如有不适及时就医。"),
+                    "analysisDetails": result.get("analysisDetails", "基于患者提供的信息完成初步风险评估。")
+                }
+
+                # 简单归一化
+                normalize = {"高": "高风险", "中": "中风险", "低": "低风险"}
+                if payload["riskLevel"] in normalize:
+                    payload["riskLevel"] = normalize[payload["riskLevel"]]
+
+                logger.info("[AIAnalyzeFast] done | riskLevel=%s", payload["riskLevel"])
+                return payload
+
+            except Exception as e:
+                logger.error(f"[AIAnalyzeFast] failed: {e}")
+                return {
+                    "riskLevel": "中风险",
+                    "suggestion": "建议结合线下检查结果进一步评估，如症状加重请及时就医。",
+                    "analysisDetails": "系统已完成基础风险评估，但详细分析生成失败，请结合临床实际判断。"
+                }
+
     def _is_multi_mcq(self, text: str) -> bool:
         return len(re.findall(r"(?:^|\n)\s*[A-D][\.\、\):：]\s+", text)) >= 2
 
