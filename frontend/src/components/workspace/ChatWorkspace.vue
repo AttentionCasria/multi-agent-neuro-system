@@ -98,6 +98,8 @@ const chatContainerRef = ref(null)
 // 影像识别：待上传图片列表 [{ dataUrl, name }]，最多 3 张
 const imageList = ref([])
 const fileInputRef = ref(null)
+const isDragOver = ref(false)
+const dragDepth = ref(0)
 // 用户是否主动上滑（上滑时暂停自动滚动）
 const userScrolled = ref(false)
 const isHistoryCollapsed = ref(false)
@@ -312,6 +314,16 @@ watch(draftMessage, () => {
   nextTick(autoResize)
 })
 
+watch(
+  () => props.isStreaming,
+  (streaming) => {
+    if (streaming) {
+      isDragOver.value = false
+      dragDepth.value = 0
+    }
+  },
+)
+
 const renderMarkdown = (raw = '') => {
   if (!raw) return ''
 
@@ -358,11 +370,32 @@ function handleSendMessage() {
 }
 
 async function handleImageSelect(event) {
-  const files = Array.from(event.target.files || [])
-  if (!files.length) return
-  // 最多 3 张
+  await appendImagesFromFiles(event.target.files)
+  // 清空 input，允许重复选同一文件
+  event.target.value = ''
+}
+
+function isSupportedImage(file) {
+  return ['image/jpeg', 'image/png', 'image/webp'].includes(file?.type)
+}
+
+async function appendImagesFromFiles(fileList) {
+  const files = Array.from(fileList || [])
+  if (!files.length || props.isStreaming) return
+
+  const imageFiles = files.filter(isSupportedImage)
+  if (!imageFiles.length) {
+    alert('仅支持上传 JPG、PNG、WEBP 图片')
+    return
+  }
+
   const remaining = 3 - imageList.value.length
-  const toProcess = files.slice(0, remaining)
+  if (remaining <= 0) {
+    alert('最多上传 3 张图片')
+    return
+  }
+
+  const toProcess = imageFiles.slice(0, remaining)
   for (const file of toProcess) {
     try {
       const dataUrl = await compressImage(file)
@@ -371,8 +404,43 @@ async function handleImageSelect(event) {
       alert(err.message)
     }
   }
-  // 清空 input，允许重复选同一文件
-  event.target.value = ''
+
+  if (imageFiles.length > toProcess.length) {
+    alert('最多上传 3 张图片')
+  }
+}
+
+function handleDragEnter(event) {
+  if (props.isStreaming) return
+  event.preventDefault()
+  dragDepth.value += 1
+  isDragOver.value = true
+}
+
+function handleDragOver(event) {
+  if (props.isStreaming) return
+  event.preventDefault()
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = 'copy'
+  }
+  if (!isDragOver.value) isDragOver.value = true
+}
+
+function handleDragLeave(event) {
+  event.preventDefault()
+  dragDepth.value = Math.max(0, dragDepth.value - 1)
+  if (dragDepth.value === 0) {
+    isDragOver.value = false
+  }
+}
+
+async function handleFileDrop(event) {
+  event.preventDefault()
+  event.stopPropagation()
+  dragDepth.value = 0
+  isDragOver.value = false
+  if (props.isStreaming) return
+  await appendImagesFromFiles(event.dataTransfer?.files)
 }
 
 function removeImage(index) {
@@ -551,7 +619,8 @@ function getThinkingData(msgIndex) {
         <div v-else class="empty-card">输入症状、病史或问题后，AI会在这里持续生成回复。</div>
       </main>
 
-      <div class="input-box">
+      <div class="input-box" :class="{ 'drag-over': isDragOver }" @dragenter="handleDragEnter"
+        @dragover="handleDragOver" @dragleave="handleDragLeave" @drop="handleFileDrop">
         <!-- 图片预览区（有图片时显示） -->
         <div v-if="imageList.length" class="image-preview-bar">
           <div v-for="(item, idx) in imageList" :key="idx" class="image-thumb-wrap">
@@ -1050,6 +1119,12 @@ function getThinkingData(msgIndex) {
   flex-direction: column;
   gap: 8px;
   flex-shrink: 0;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+
+  &.drag-over {
+    border-top-color: var(--color-primary);
+    background: rgba(17, 150, 127, 0.08);
+  }
 }
 
 /* 图片预览条 */
