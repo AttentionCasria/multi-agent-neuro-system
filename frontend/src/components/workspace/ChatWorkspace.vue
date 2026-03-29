@@ -260,8 +260,7 @@ function flushRender(immediate = false) {
 
 function doRender() {
   renderedHtmlList.value = props.currentTalkList.map((msg, idx) => {
-    // 偶数索引为用户消息，使用纯文本渲染（template 中用 plain-text 处理），无需解析
-    if (idx % 2 === 0) return ''
+    if (isUserMessage(msg, idx)) return ''
     return renderMarkdown(msgText(msg))
   })
 }
@@ -456,9 +455,20 @@ function closePreview() {
   previewImgUrl.value = ''
 }
 
-// 从消息中提取纯文本（兼容字符串和 { text, images } 对象两种格式）
+function msgRole(msg, fallbackRole = 'user') {
+  if (typeof msg === 'object' && msg !== null && msg.role) {
+    return msg.role === 'assistant' ? 'assistant' : 'user'
+  }
+  return fallbackRole
+}
+
+function isUserMessage(msg, index) {
+  return msgRole(msg, index % 2 === 0 ? 'user' : 'assistant') === 'user'
+}
+
+// 从消息中提取纯文本（兼容字符串、旧对象、role/content 新对象）
 function msgText(msg) {
-  return typeof msg === 'object' && msg !== null ? (msg.text || '') : (msg || '')
+  return typeof msg === 'object' && msg !== null ? (msg.content ?? msg.text ?? msg.message ?? '') : (msg || '')
 }
 
 // 从消息中提取图片列表
@@ -510,12 +520,10 @@ function shortText(value, fallback = '暂无内容') {
   return text || fallback
 }
 
-// 根据全局消息索引（奇数=AI消息）获取对应的思考记录
-// currentTalkList 交替存储：偶数索引=用户，奇数索引=AI
-// 第 N 条 AI 消息的奇数索引为 2N+1，对应 thinkingHistoryList[N]
+// 根据当前消息在 AI 消息序列中的位置获取对应思考记录
 function getThinkingData(msgIndex) {
-  if (msgIndex % 2 === 0) return null  // 用户消息不需要思考面板
-  const aiMsgIndex = Math.floor(msgIndex / 2)
+  if (isUserMessage(props.currentTalkList[msgIndex], msgIndex)) return null
+  const aiMsgIndex = props.currentTalkList.slice(0, msgIndex + 1).filter((msg, index) => !isUserMessage(msg, index)).length - 1
   const entry = props.thinkingHistoryList[aiMsgIndex]
   return entry?.events?.length ? entry : null
 }
@@ -573,14 +581,14 @@ function getThinkingData(msgIndex) {
         <div v-else-if="currentTalkList.length" class="message-stack">
           <!-- key 使用纯 index：Vue 复用同一元素，避免每次字符更新都销毁重建整个 article -->
           <article v-for="(msg, index) in currentTalkList" :key="index" class="message-wrapper"
-            :class="{ user: index % 2 === 0 }">
+            :class="{ user: isUserMessage(msg, index) }">
             <div class="message-meta">
-              <span>{{ index % 2 === 0 ? '医生输入' : 'AI回复' }}</span>
+              <span>{{ isUserMessage(msg, index) ? '医生输入' : 'AI回复' }}</span>
               <button type="button" class="copy-btn" @click="handleCopy(msg)">复制</button>
             </div>
 
-            <div class="message" :class="{ user: index % 2 === 0 }">
-              <template v-if="index % 2 === 0">
+            <div class="message" :class="{ user: isUserMessage(msg, index) }">
+              <template v-if="isUserMessage(msg, index)">
                 <!-- 图片缩略图（有图时显示，点击放大） -->
                 <div v-if="msgImages(msg).length" class="msg-image-list">
                   <img v-for="(imgUrl, i) in msgImages(msg)" :key="i" :src="imgUrl" class="msg-image-thumb" alt="上传图片"

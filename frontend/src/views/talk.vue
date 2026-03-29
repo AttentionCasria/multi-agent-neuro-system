@@ -109,12 +109,45 @@ const syncPatient = computed(() => {
   return patients.value.find((patient) => patient.id === syncPatientId.value) || null
 })
 
+function normalizeTalkMessage(message, fallbackRole = 'user') {
+  if (typeof message === 'string') {
+    return {
+      role: fallbackRole,
+      content: String(message || ''),
+      images: [],
+    }
+  }
+
+  if (!message || typeof message !== 'object') {
+    return {
+      role: fallbackRole,
+      content: '',
+      images: [],
+    }
+  }
+
+  const role = message.role === 'assistant' ? 'assistant' : 'user'
+  const content = String(message.content ?? message.text ?? message.message ?? '')
+  const images = Array.isArray(message.images)
+    ? message.images.map((item) => String(item || '')).filter(Boolean)
+    : []
+
+  return {
+    role,
+    content,
+    images,
+  }
+}
+
 const conversationPayload = computed(() =>
   currentTalkList.value
-    .map((content, index) => ({
-      role: index % 2 === 0 ? 'user' : 'assistant',
-      content: String(content || '').trim(),
-    }))
+    .map((message, index) => {
+      const normalized = normalizeTalkMessage(message, index % 2 === 0 ? 'user' : 'assistant')
+      return {
+        role: normalized.role,
+        content: normalized.content.trim(),
+      }
+    })
     .filter((item) => item.content),
 )
 
@@ -159,13 +192,9 @@ function normalizeTalkId(value) {
 function normalizeTalkHistory(payload) {
   const source = Array.isArray(payload) ? payload : Array.isArray(payload?.conversation) ? payload.conversation : []
 
-  if (source.every((item) => typeof item === 'string')) {
-    return source.map((item) => String(item || ''))
-  }
-
   return source
-    .map((item) => String(item?.content ?? item?.message ?? ''))
-    .filter((item) => item !== '')
+    .map((item, index) => normalizeTalkMessage(item, index % 2 === 0 ? 'user' : 'assistant'))
+    .filter((item) => item.content || item.images.length)
 }
 
 function normalizeAiOpinion(aiOpinion) {
@@ -297,9 +326,12 @@ async function handleSendMessage({ text, images } = {}) {
   isStreaming.value = true
   isThinking.value = true   // 流开始前先进入 thinking 阶段
   thinkingHint.value = ''
-  // 有图片时存 { text, images } 对象，无图时仍存字符串（兼容历史消息）
-  currentTalkList.value.push(images && images.length ? { text, images } : text)
-  currentTalkList.value.push('')
+  currentTalkList.value.push({
+    role: 'user',
+    content: text,
+    images: Array.isArray(images) ? images : [],
+  })
+  currentTalkList.value.push({ role: 'assistant', content: '', images: [] })
   const aiIndex = currentTalkList.value.length - 1
 
   // 为本次 AI 回答初始化独立的思考记录
@@ -340,7 +372,7 @@ async function handleSendMessage({ text, images } = {}) {
       // 固定每次输出 1-2 个字符，保持视觉连续性（不随积压量增大 batch）
       const chars = charBuffer.splice(0, 2)
       displayText += chars.join('')
-      currentTalkList.value[aiIndex] = displayText
+      currentTalkList.value[aiIndex] = { role: 'assistant', content: displayText, images: [] }
       timerId = setTimeout(tick, delay)
     }
     timerId = setTimeout(tick, 0)
@@ -389,9 +421,9 @@ async function handleSendMessage({ text, images } = {}) {
     // 缓冲区已空，停止打字机，再用服务端最终内容兜底（防止极端情况下少字）
     if (timerId !== null) { clearTimeout(timerId); timerId = null }
     if (typeof content === 'string') {
-      currentTalkList.value[aiIndex] = content
+      currentTalkList.value[aiIndex] = { role: 'assistant', content, images: [] }
     } else {
-      currentTalkList.value[aiIndex] = displayText
+      currentTalkList.value[aiIndex] = { role: 'assistant', content: displayText, images: [] }
     }
 
     if (currentTalkId.value === NEW_TALK_ID && talkId) {
