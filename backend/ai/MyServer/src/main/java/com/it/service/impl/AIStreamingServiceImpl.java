@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.it.po.uo.Cont;
+import com.it.po.uo.ContDTO;
 import com.it.pojo.Talk;
 import com.it.service.AIStreamingService;
 import com.it.service.IContService;
@@ -89,6 +90,7 @@ public class AIStreamingServiceImpl implements AIStreamingService {
             String question,
             String answer,
             String title,
+            List<String> images,
             int retryCount) {}
 
     /** 持久化失败重试队列（内存级，线程安全） */
@@ -154,9 +156,35 @@ public class AIStreamingServiceImpl implements AIStreamingService {
 
     @Transactional(readOnly = true)
     @Override
-    public List<String> getPreContent(Long userId, Long talkId) {
-        return getCachedHistory(userId, talkId).stream()
-                .map(Cont::getContent)
+    public List<ContDTO> getPreContent(Long userId, Long talkId) {
+        // 直接查数据库，不走 Redis 缓存
+        // 原因：Redis 缓存中 images 字段已被剔除（避免大字段膨胀），
+        //       前端加载历史记录时需要完整的图片数据，必须从 DB 取
+        List<Cont> history = contService.list(
+                new LambdaQueryWrapper<Cont>()
+                        .eq(Cont::getUserId, userId)
+                        .eq(Cont::getTalkId, talkId)
+                        .orderByAsc(Cont::getId)
+        );
+        if (history == null) return Collections.emptyList();
+
+        return history.stream()
+                .map(cont -> {
+                    // 将 images JSON 字符串反序列化回 List<String>，失败时降级为空列表
+                    List<String> imageList = Collections.emptyList();
+                    if (cont.getImages() != null && !cont.getImages().isEmpty()) {
+                        try {
+                            imageList = objectMapper.readValue(cont.getImages(), new TypeReference<>() {});
+                        } catch (Exception e) {
+                            log.warn("图片列表反序列化失败，降级为空列表: contId={}", cont.getId());
+                        }
+                    }
+                    return ContDTO.builder()
+                            .role(cont.getRole() != null ? cont.getRole() : "user")
+                            .content(cont.getContent() != null ? cont.getContent() : "")
+                            .images(imageList)
+                            .build();
+                })
                 .collect(Collectors.toList());
     }
 
@@ -311,13 +339,15 @@ public class AIStreamingServiceImpl implements AIStreamingService {
                             return;
                         }
 
+                        // 快照本次请求携带的图片列表，随问题一起持久化
+                        final List<String> snapshotImages = images;
                         Mono.fromRunnable(
-                                () -> persistAndCleanCache(userId, finalTalkId, question, snapshotAnswer, snapshotTitle))
+                                () -> persistAndCleanCache(userId, finalTalkId, question, snapshotAnswer, snapshotTitle, snapshotImages))
                                 .subscribeOn(Schedulers.boundedElastic())
                                 .doOnError(e -> log.warn("异步持久化失败，进入重试队列: talkId={}", finalTalkId, e))
                                 .onErrorResume(e -> {
                                     retryQueue.offer(new PersistenceTask(
-                                            userId, finalTalkId, question, snapshotAnswer, snapshotTitle, 0));
+                                            userId, finalTalkId, question, snapshotAnswer, snapshotTitle, snapshotImages, 0));
                                     return Mono.empty();
                                 })
                                 .subscribe();
@@ -589,10 +619,10 @@ public class AIStreamingServiceImpl implements AIStreamingService {
      * 供 doOnNext 的异步 Mono 和 @Scheduled 重试任务共同调用。
      */
     private void persistAndCleanCache(Long userId, Long talkId,
-                                      String question, String answer, String title) {
+                                      String question, String answer, String title, List<String> images) {
         log.info("异步持久化开始: talkId={}, answerLen={}", talkId, answer.length());
         conversationPersistenceService.persistConversation(
-                userId, talkId, question, answer, "", title);
+                userId, talkId, question, answer, "", title, images);
         // 持久化成功后清理历史缓存，保证下一轮对话能重新加载最新记录
         stringRedisTemplate.delete("chat:history:" + userId + ":" + talkId);
         log.info("异步持久化完成，已清理历史缓存: talkId={}", talkId);
@@ -621,7 +651,7 @@ public class AIStreamingServiceImpl implements AIStreamingService {
 
             try {
                 persistAndCleanCache(task.userId(), task.talkId(),
-                        task.question(), task.answer(), task.title());
+                        task.question(), task.answer(), task.title(), task.images());
                 log.info("持久化重试成功: talkId={}, retryCount={}", task.talkId(), task.retryCount());
             } catch (Exception e) {
                 int nextRetry = task.retryCount() + 1;
@@ -630,7 +660,7 @@ public class AIStreamingServiceImpl implements AIStreamingService {
                 // 重新入队，retryCount + 1
                 retryQueue.offer(new PersistenceTask(
                         task.userId(), task.talkId(), task.question(),
-                        task.answer(), task.title(), nextRetry));
+                        task.answer(), task.title(), task.images(), nextRetry));
             }
         }
     }
@@ -708,10 +738,22 @@ public class AIStreamingServiceImpl implements AIStreamingService {
 
         try {
             String key = buildHistoryKey(userId, talkId);
-            // 先删除旧缓存，再设置新缓存
+            // 存入缓存前将 images 字段置空，避免 Base64 大字段撑爆 Redis
+            // images 仅在前端请求历史记录时从数据库实时读取（getPreContent 走 DB 查询）
+            List<Cont> cacheList = history.stream()
+                    .map(c -> Cont.builder()
+                            .id(c.getId())
+                            .userId(c.getUserId())
+                            .talkId(c.getTalkId())
+                            .content(c.getContent())
+                            .role(c.getRole())
+                            .images(null)
+                            .createTime(c.getCreateTime())
+                            .build())
+                    .collect(Collectors.toList());
             stringRedisTemplate.delete(key);
-            stringRedisTemplate.opsForValue().set(key, objectMapper.writeValueAsString(history), 1, TimeUnit.HOURS);
-            log.debug("历史记录已写入缓存: key={}", key);
+            stringRedisTemplate.opsForValue().set(key, objectMapper.writeValueAsString(cacheList), 1, TimeUnit.HOURS);
+            log.debug("历史记录已写入缓存（images 已剔除）: key={}", key);
         } catch (Exception e) {
             log.error("写入历史记录缓存失败", e);
         }

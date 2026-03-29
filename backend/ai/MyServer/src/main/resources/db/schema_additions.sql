@@ -60,3 +60,23 @@ CREATE TABLE IF NOT EXISTS learning_material (
     update_time DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP
                 ON UPDATE CURRENT_TIMESTAMP                         COMMENT '更新时间'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='医生学习资料表';
+
+-- =====================
+-- cont 表图片支持改造
+-- 执行顺序：先加列，再修正旧数据 role
+-- =====================
+
+-- 1. 加 role 列（区分 user / assistant），默认先全填 user，后面用 UPDATE 修正
+ALTER TABLE cont
+    ADD COLUMN role   VARCHAR(16)  NOT NULL DEFAULT 'user'    COMMENT '消息角色：user 或 assistant',
+    ADD COLUMN images LONGTEXT     NULL                        COMMENT '用户上传图片的 Base64 列表（JSON 数组），仅 user 消息有值';
+
+-- 2. 修正旧数据：按每个 talkId 内的时间顺序，偶数位（第2、4、6...条）标为 assistant
+--    因为 cont 表是一问一答交替写入，奇数位是用户问题，偶数位是 AI 回答
+UPDATE cont c
+JOIN (
+    SELECT id,
+           ROW_NUMBER() OVER (PARTITION BY talkId ORDER BY id) AS rn
+    FROM cont
+) ranked ON c.id = ranked.id
+SET c.role = IF(ranked.rn % 2 = 0, 'assistant', 'user');

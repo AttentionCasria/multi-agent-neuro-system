@@ -1,7 +1,8 @@
 package com.it.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.it.po.uo.Cont;
 import com.it.pojo.Talk;
 import com.it.service.IContService;
@@ -12,6 +13,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.List;
 
 @Service
@@ -22,24 +24,40 @@ public class ConversationPersistenceService {
 
     private final IContService contService;
     private final ITalkService talkService;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Transactional
-    public void persistConversation(Long userId, Long talkId, String question, String answer, String summary, String title) {
+    public void persistConversation(Long userId, Long talkId, String question, String answer,
+                                    String summary, String title, List<String> images) {
         LocalDateTime now = LocalDateTime.now();
 
-        // 保存用户问题
+        // 将图片列表序列化为 JSON 字符串，无图片时存 null
+        String imagesJson = null;
+        if (images != null && !images.isEmpty()) {
+            try {
+                imagesJson = objectMapper.writeValueAsString(images);
+            } catch (JsonProcessingException e) {
+                log.warn("图片列表序列化失败，将跳过图片存储: talkId={}, err={}", talkId, e.getMessage());
+            }
+        }
+
+        // 保存用户问题（附带图片）
         Cont userCont = new Cont();
         userCont.setUserId(userId);
         userCont.setTalkId(talkId);
         userCont.setContent(question);
+        userCont.setRole("user");
+        userCont.setImages(imagesJson);
         userCont.setCreateTime(now);
         contService.save(userCont);
 
-        // 保存AI回答
+        // 保存AI回答（无图片）
         Cont aiCont = new Cont();
         aiCont.setUserId(userId);
         aiCont.setTalkId(talkId);
         aiCont.setContent(answer);
+        aiCont.setRole("assistant");
+        aiCont.setImages(null);
         aiCont.setCreateTime(now);
         contService.save(aiCont);
 
