@@ -31,7 +31,15 @@ defineOptions({ name: 'TalkIndex' })
 const tabs = [
   { key: 'chat', label: '智能诊疗', hint: '对话与同步分析' },
   { key: 'patients', label: '患者管理', hint: '病历与AI意见' },
-  { key: 'learning', label: '医生学习', hint: '资料检索与阅读' },
+  {
+    key: 'learning',
+    label: '医生学习',
+    hint: '资料检索与阅读',
+    children: [
+      { key: 'pdfs', label: 'PDF 文档库', shortLabel: 'PDF', description: '浏览院内 PDF 资料并在线预览' },
+      { key: 'pubmed', label: 'PubMed 文献', shortLabel: 'PubMed', description: '检索外部医学文献并查看摘要' },
+    ],
+  },
 ]
 
 const userStore = useUserStore()
@@ -39,6 +47,7 @@ const themeStore = useThemeStore()
 const NEW_TALK_ID = ''
 
 const activeTab = ref('chat')
+const activeLearningView = ref('pdfs')
 const isDialogShow = ref(false)
 
 const talkTitleList = ref([])
@@ -748,6 +757,16 @@ function handleMaterialSearch() {
   fetchMaterials()
 }
 
+function handleWorkspaceTabChange(payload) {
+  if (!payload?.key) return
+
+  activeTab.value = payload.key
+
+  if (payload.key === 'learning' && payload.childKey) {
+    activeLearningView.value = payload.childKey
+  }
+}
+
 function goMaterialPage(delta) {
   const nextPage = learningQuery.value.page + delta
   if (nextPage < 1 || nextPage > materialPageCount.value) return
@@ -774,7 +793,8 @@ function openPatientWorkspace(patientId) {
 
 
     <section class="tab-section">
-      <WorkspaceTabs :tabs="tabs" :active-tab="activeTab" @change="activeTab = $event" />
+      <WorkspaceTabs :tabs="tabs" :active-tab="activeTab" :active-child-tab="activeLearningView"
+        @change="handleWorkspaceTabChange" />
       <div class="header-right">
         <button type="button" class="theme-toggle" :title="themeStore.dark ? '切换到浅色模式' : '切换到深色模式'"
           @click="themeStore.toggle()">
@@ -822,8 +842,8 @@ function openPatientWorkspace(patientId) {
         @open-edit="openEditPatient" @delete-patient="handleDeletePatient" @analyze-patient="handleAnalyzePatient"
         @page-change="goPatientPage" />
 
-      <LearningWorkspace v-else v-model:query="learningQuery" :materials="materials" :learning-total="learningTotal"
-        :materials-loading="materialsLoading" :selected-material-id="selectedMaterialId"
+      <LearningWorkspace v-else v-model:query="learningQuery" v-model:view="activeLearningView" :materials="materials"
+        :learning-total="learningTotal" :materials-loading="materialsLoading" :selected-material-id="selectedMaterialId"
         :material-detail="materialDetail" :material-detail-loading="materialDetailLoading"
         :material-page-count="materialPageCount" @search="handleMaterialSearch" @select-material="handleSelectMaterial"
         @page-change="goMaterialPage" @open-material-link="openMaterialLink" />

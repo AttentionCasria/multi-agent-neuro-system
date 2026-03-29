@@ -5,6 +5,7 @@ import * as pdfjsLib from 'pdfjs-dist'
 import PapersSidebar from './PapersSidebar.vue'
 import { getDocumentsAPI, getDocumentUrlAPI } from '@/api/documents'
 import { searchPubMedAPI } from '@/api/learning'
+import FileSVG from '../svg/FileSVG.vue'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.js',
@@ -45,10 +46,10 @@ defineProps({
 })
 
 defineModel('query', { required: true })
+const activeView = defineModel('view', { default: 'pdfs' })
 defineEmits(['search', 'select-material', 'page-change', 'open-material-link'])
 
 const MOBILE_BREAKPOINT = 900
-const activeView = ref('pdfs')
 const isMobileLayout = ref(false)
 const activeMobilePane = ref('list')
 
@@ -122,6 +123,11 @@ function formatSize(bytes) {
   return (bytes / 1024 / 1024).toFixed(1) + ' MB'
 }
 
+function getFileExtension(fileName) {
+  const match = String(fileName || '').trim().match(/\.([a-z0-9]+)$/i)
+  return (match?.[1] || 'FILE').slice(0, 4).toUpperCase()
+}
+
 function displayTypes(pubTypes) {
   return (pubTypes || []).filter((type) => DISPLAY_TYPES.has(type))
 }
@@ -130,14 +136,6 @@ function pillClass(type) {
   if (EVIDENCE_HIGH.has(type)) return 'pill pill--high'
   if (EVIDENCE_MID.has(type)) return 'pill pill--mid'
   return 'pill pill--low'
-}
-
-function switchView(view) {
-  activeView.value = view
-  activeMobilePane.value = 'list'
-  if (view === 'pdfs' && !pdfCategories.value.length && !pdfLoading.value) {
-    loadPdfDocuments()
-  }
 }
 
 async function loadPdfDocuments() {
@@ -294,15 +292,18 @@ watch(
   { immediate: true },
 )
 
-watch(activeView, () => {
+watch(activeView, (view) => {
+  if (view === 'pdfs' && !pdfCategories.value.length && !pdfLoading.value) {
+    loadPdfDocuments()
+  }
+
   if (!isMobileLayout.value) return
   activeMobilePane.value = 'list'
-})
+}, { immediate: true })
 
 onMounted(() => {
   updateLayoutMode()
   window.addEventListener('resize', updateLayoutMode)
-  loadPdfDocuments()
 })
 
 onBeforeUnmount(() => {
@@ -312,13 +313,6 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="learning-workspace">
-    <div class="view-tabs">
-      <button type="button" class="view-tab" :class="{ active: activeView === 'pdfs' }" @click="switchView('pdfs')">PDF
-        文档库</button>
-      <button type="button" class="view-tab" :class="{ active: activeView === 'pubmed' }"
-        @click="switchView('pubmed')">PubMed 文献</button>
-    </div>
-
     <div class="learning-layout" :class="{
       mobile: isMobileLayout,
       'mobile-show-preview': isMobileLayout && activeMobilePane === 'preview',
@@ -345,7 +339,10 @@ onBeforeUnmount(() => {
             <div class="selection-list">
               <button v-for="doc in categoryDocs" :key="doc.id" type="button" class="selection-item"
                 :class="{ active: selectedPdfId === doc.id }" @click="selectPdfDoc(doc, { switchPane: true })">
-                <span class="selection-icon">PDF</span>
+                <span class="selection-file-icon" aria-hidden="true">
+                  <FileSVG :size="36" />
+                  <span class="selection-file-ext">{{ getFileExtension(doc.name) }}</span>
+                </span>
                 <span class="selection-copy">
                   <strong>{{ doc.name }}</strong>
                   <small>{{ formatSize(doc.size) }}</small>
@@ -471,47 +468,19 @@ onBeforeUnmount(() => {
 
 <style scoped lang="scss">
 .learning-workspace {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   height: 100%;
   min-height: 0;
   overflow: hidden;
   background: var(--color-bg-base);
 }
 
-.view-tabs {
-  display: flex;
-  gap: 4px;
-  padding: 10px 14px 0;
-  background: var(--color-bg-light);
-  border-bottom: 1px solid var(--color-border);
-}
-
-.view-tab {
-  padding: 7px 18px;
-  border-radius: 6px 6px 0 0;
-  border: none;
-  background: transparent;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--color-text-medium);
-  cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast);
-
-  &:hover {
-    background: var(--color-bg-base);
-  }
-
-  &.active {
-    background: var(--color-bg-base);
-    color: var(--color-primary);
-    box-shadow: 0 -2px 0 var(--color-primary) inset;
-  }
-}
-
 .learning-layout {
+  flex: 1;
   display: grid;
   grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  height: 100%;
   min-height: 0;
   overflow: hidden;
 }
@@ -595,8 +564,8 @@ onBeforeUnmount(() => {
   text-align: left;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 14px;
+  gap: 8px;
+  padding: 12px;
   border-bottom: 1px solid var(--color-border-item);
   cursor: pointer;
   transition: background var(--transition-fast), border-color var(--transition-fast);
@@ -611,19 +580,40 @@ onBeforeUnmount(() => {
   }
 }
 
-.selection-icon {
+.selection-file-icon {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 44px;
+  width: 44px;
   height: 44px;
-  border-radius: 12px;
-  background: rgba(17, 150, 127, 0.12);
-  color: var(--color-primary-dark);
-  font-size: 12px;
+  color: var(--color-primary);
+  opacity: 0.5;
+  flex-shrink: 0;
+  transition: color var(--transition-fast), transform var(--transition-fast);
+}
+
+.selection-item:hover .selection-file-icon,
+.selection-item.active .selection-file-icon {
+  opacity: 1;
+}
+
+
+.selection-file-ext {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  max-width: 28px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 7px;
+  line-height: 1;
   font-weight: 800;
   letter-spacing: 0.04em;
-  flex-shrink: 0;
+  color: currentColor;
+  pointer-events: none;
 }
 
 .selection-copy {
