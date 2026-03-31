@@ -154,7 +154,16 @@ class ReportTemplateManager:
             self._system_role = new_role
             logger.info(f"[文献列表] 动态更新成功，共 {len(doc_names)} 篇: {doc_names}")
         else:
-            logger.warning("[文献列表] 未能定位静态列表区域，使用 YAML 默认值")
+            # 正则定位失败（YAML格式变更等），末尾追加明确覆盖语句作为兜底
+            fallback_inject = (
+                f"\n\n【本次服务实际加载文献，引用时只能使用以下名称】\n"
+                f"{new_list_text}\n"
+                f"严禁引用上述列表之外的任何文献名。"
+            )
+            self._system_role += fallback_inject
+            logger.warning(
+                f"[文献列表] 正则定位失败，已末尾追加兜底注入，共 {len(doc_names)} 篇"
+            )
 
     def reload(self, template_file: str = "report_templates.yaml"):
         self._data = _load_yaml(template_file)

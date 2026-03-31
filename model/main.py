@@ -7,6 +7,7 @@ import concurrent.futures
 from contextlib import asynccontextmanager
 import os
 import json
+import uuid
 import jwt
 
 from fastapi import FastAPI, HTTPException
@@ -169,13 +170,15 @@ async def get_model_result(request: QueryRequest):
         raise HTTPException(status_code=503, detail="Model service not ready")
 
     async def generate():
+        # 每次请求生成唯一 ID，贯穿本次流的所有日志，便于排查问题
+        req_id = uuid.uuid4().hex[:12]
         try:
-            logging.info(f"=== 开始处理请求 ===")
-            logging.info(f"请求问题: {request.question}")
-            logging.info(f"请求all_info: {request.all_info}")
-            logging.info(f"请求report_mode: {request.report_mode}")
-            logging.info(f"请求show_thinking: {request.show_thinking}")
-            logging.info(f"请求图片数量: {len(request.images)}")
+            logging.info(f"[{req_id}] === 开始处理请求 ===")
+            logging.info(f"[{req_id}] 请求问题: {request.question}")
+            logging.info(f"[{req_id}] 请求all_info: {request.all_info}")
+            logging.info(f"[{req_id}] 请求report_mode: {request.report_mode}")
+            logging.info(f"[{req_id}] 请求show_thinking: {request.show_thinking}")
+            logging.info(f"[{req_id}] 请求图片数量: {len(request.images)}")
 
             loop = asyncio.get_running_loop()
             final_answer_parts = []
@@ -212,6 +215,7 @@ async def get_model_result(request: QueryRequest):
                     "summary": request.all_info,
                     "name": "影像分析",
                     "all_info": request.all_info,
+                    "request_id": req_id
                 }, ensure_ascii=False) + "\n"
                 return
 
@@ -347,19 +351,21 @@ async def get_model_result(request: QueryRequest):
 
             # 标准格式：meta 事件携带 all_info 更新信息
             yield json.dumps({"type": "meta", "content": {"all_info_update": summary_meta}}, ensure_ascii=False) + "\n"
-            # done 事件：标志流结束，携带汇总信息
+            # done 事件：标志流结束，携带汇总信息及请求 ID（供前端展示/日志关联）
             yield json.dumps({
                 "type": "done",
                 "content": "",
                 "result": answer_text,
                 "summary": updated_summary,
                 "name": generated_name,
-                "all_info": updated_summary
+                "all_info": updated_summary,
+                "request_id": req_id
             }, ensure_ascii=False) + "\n"
+            logging.info(f"[{req_id}] === 请求处理完成 ===")
 
         except Exception as e:
             # 记录含完整堆栈的错误日志
-            logging.error(f"generate() 外层异常 | {format_error_log(e)}")
+            logging.error(f"[{req_id}] generate() 外层异常 | {format_error_log(e)}")
             # 构造结构化错误事件并 yield（双写 content 字段保持旧前端兼容）
             yield json.dumps(build_error_event(e, talk_id=None), ensure_ascii=False) + "\n"
 
