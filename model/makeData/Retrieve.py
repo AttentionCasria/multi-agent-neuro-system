@@ -3,6 +3,7 @@
 import logging
 import os
 import hashlib
+import time
 from typing import List
 from dotenv import load_dotenv
 from langchain.schema import Document
@@ -181,13 +182,19 @@ class HybridRetriever:
             self.bm25 = None
             logger.warning("⚠️ [HybridRetriever] 文档为空，BM25 未初始化")
 
-        self._cache = {}
+        # {cache_key: (result, timestamp)}，TTL 300s 避免跨患者上下文污染
+        self._cache: dict = {}
+        self._cache_ttl = 300
 
     def search(self, query: str, top_k_final: int = 3) -> List[Document]:
         cache_key = hashlib.md5(query.encode("utf-8")).hexdigest()
         if cache_key in self._cache:
-            logger.info(f"⚡ [Cache Hit] 跳过重复检索: {query[:50]}...")
-            return self._cache[cache_key]
+            result, ts = self._cache[cache_key]
+            if time.time() - ts < self._cache_ttl:
+                logger.info(f"⚡ [Cache Hit] 跳过重复检索: {query[:50]}...")
+                return result
+            # 缓存过期，删除旧记录
+            del self._cache[cache_key]
 
         logger.info(f"🔍 [HybridRetriever] 检索: {query[:60]}...")
 
@@ -201,14 +208,14 @@ class HybridRetriever:
 
         if not candidates:
             logger.warning("⚠️ 检索结果为空")
-            self._cache[cache_key] = []
+            self._cache[cache_key] = ([], time.time())
             return []
 
         logger.info(f"🔍 召回 {len(candidates)} 条，开始 rerank...")
 
         result = self.reranker.rerank(query, candidates)
 
-        self._cache[cache_key] = result
+        self._cache[cache_key] = (result, time.time())
         return result
 
     def clear_cache(self):

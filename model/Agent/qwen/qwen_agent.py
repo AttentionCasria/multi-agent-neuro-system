@@ -482,7 +482,9 @@ class qwenAgent:
             evidence = state.get("evidence", "")
 
             if show_thinking:
-                yield self._emit_thinking("Step 2", "✅ 证据检索完成", f"证据 {len(evidence)} 字符")
+                # 展示检索到的片段数量比原始字符数对用户更有意义
+                chunk_count = evidence.count("---") + 1 if evidence.strip() else 0
+                yield self._emit_thinking("Step 2", "✅ 证据检索完成", f"检索到 {len(clinical_questions)} 个临床维度，共 {chunk_count} 个证据片段")
 
             # Node 4: Reason 推理（Proposer + Critic 并行）
             if show_thinking:
@@ -732,8 +734,15 @@ class qwenAgent:
         - 建议优先级
         """
 
-        proposer_task = self.llm_proposer.ainvoke([HumanMessage(content=proposer_prompt)])
-        critic_task = self.llm_critic.ainvoke([HumanMessage(content=pre_critic_prompt)])
+        # 注入 system_role，确保 proposer/critic 受文献引用约束及禁诊语气约束
+        proposer_task = self.llm_proposer.ainvoke([
+            SystemMessage(content=self.reports.system_role),
+            HumanMessage(content=proposer_prompt),
+        ])
+        critic_task = self.llm_critic.ainvoke([
+            SystemMessage(content=self.reports.system_role),
+            HumanMessage(content=pre_critic_prompt),
+        ])
 
         proposer_resp, critic_resp = await asyncio.gather(proposer_task, critic_task)
 
@@ -761,7 +770,10 @@ class qwenAgent:
         输出最终答案。
         """
 
-        final_resp = await self.llm_proposer.ainvoke([HumanMessage(content=final_prompt)])
+        final_resp = await self.llm_proposer.ainvoke([
+            SystemMessage(content=self.reports.system_role),
+            HumanMessage(content=final_prompt),
+        ])
         final_answer = final_resp.content
 
         return final_answer, critic_text

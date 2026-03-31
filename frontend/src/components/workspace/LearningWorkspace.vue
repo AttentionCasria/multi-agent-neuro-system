@@ -261,7 +261,14 @@ async function handlePubMedSearch() {
     pubmedPapers.value = papers
     activePaperPmid.value = papers[0]?.pmid || ''
   } catch (error) {
-    pubmedError.value = error?.msg || '检索失败，请稍后重试'
+    // 优先取服务端返回的 msg，其次 HTTP 状态码，最后降级为通用提示
+    const serverMsg = error.response?.data?.msg
+    const httpStatus = error.response?.status
+    pubmedError.value = serverMsg
+      || (httpStatus ? `服务错误 ${httpStatus}，请稍后重试` : null)
+      || error.message
+      || '检索失败，请稍后重试'
+    console.error('[PubMed] 检索请求失败:', error)
   } finally {
     pubmedLoading.value = false
   }
