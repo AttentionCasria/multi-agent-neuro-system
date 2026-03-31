@@ -88,6 +88,18 @@ def init_all_resources():
         top_k=CONFIG.get("top_k_final", 3)
     )
 
+    # 从本地已加载的 PDF 文件名动态更新 system_role 中的文献列表
+    # 确保 AI 只引用本地文档库中实际存在的文件名，消除硬编码列表与 OSS 不同步的问题
+    if retriever.chunks:
+        _loaded_doc_names = sorted(set(
+            chunk.metadata["source"].removesuffix(".pdf").removesuffix(".PDF")
+            for chunk in retriever.chunks
+            if chunk.metadata.get("source")
+        ))
+        report_mgr.update_doc_list(_loaded_doc_names)
+    else:
+        logging.warning("[文献列表] 本地文档为空，system_role 使用 YAML 静态列表")
+
     medical_assistant = MedicalAssistant(
         llm_main=llm_max,
         llm_fast=llm_plus,

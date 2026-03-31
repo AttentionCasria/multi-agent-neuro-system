@@ -137,6 +137,25 @@ class ReportTemplateManager:
     def list_modes(self) -> list:
         return list(self._templates.keys())
 
+    def update_doc_list(self, doc_names: list) -> None:
+        """用本地/OSS 实际文件名替换 system_role 中的硬编码文献列表。
+        若正则未能定位列表区域（例如 YAML 格式改变），保持静态列表不变。
+        """
+        import re
+        if not doc_names:
+            logger.warning("[文献列表] 传入文件名为空，保持静态列表")
+            return
+
+        new_list_text = "\n".join(f"- {name}" for name in sorted(set(doc_names)))
+        # 匹配"严禁自行创造..."到"如需引用"之间的所有 "- ..." 条目
+        pattern = r"(严禁自行创造[^\n]*\n)((?:- [^\n]*\n)+)(如需引用)"
+        new_role, n = re.subn(pattern, rf"\g<1>{new_list_text}\n\g<3>", self._system_role)
+        if n:
+            self._system_role = new_role
+            logger.info(f"[文献列表] 动态更新成功，共 {len(doc_names)} 篇: {doc_names}")
+        else:
+            logger.warning("[文献列表] 未能定位静态列表区域，使用 YAML 默认值")
+
     def reload(self, template_file: str = "report_templates.yaml"):
         self._data = _load_yaml(template_file)
         self._system_role = self._data.get("system_role", "")

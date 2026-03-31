@@ -440,7 +440,12 @@ class qwenAgent:
 - 禁止确诊语气
 - 禁止具体剂量
 - 如果需要，引用权威指南"""
-                async for chunk in self.llm_proposer.astream([HumanMessage(content=knowledge_prompt)]):
+                # 注入 system_role，确保 knowledge 路径也受文献引用约束
+                _knowledge_messages = [
+                    SystemMessage(content=self.reports.system_role),
+                    HumanMessage(content=knowledge_prompt),
+                ]
+                async for chunk in self.llm_proposer.astream(_knowledge_messages):
                     content = chunk.content if hasattr(chunk, "content") else str(chunk)
                     if content:
                         yield {"type": "chunk", "content": content}
@@ -1060,7 +1065,12 @@ class qwenAgent:
 
 ### 问题2
 回答"""
-        async for chunk in self.llm_proposer.astream([HumanMessage(content=proposer_prompt)]):
+        # 注入 system_role，确保追问路径也受文献引用约束
+        _user_q_messages = [
+            SystemMessage(content=self.reports.system_role),
+            HumanMessage(content=proposer_prompt),
+        ]
+        async for chunk in self.llm_proposer.astream(_user_q_messages):
             content = chunk.content if hasattr(chunk, "content") else str(chunk)
             if content:
                 yield content
