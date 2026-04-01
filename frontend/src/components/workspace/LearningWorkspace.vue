@@ -6,6 +6,8 @@ import PapersSidebar from './PapersSidebar.vue'
 import { getDocumentsAPI, getDocumentUrlAPI } from '@/api/documents'
 import { searchPubMedAPI } from '@/api/learning'
 import FileSVG from '../svg/FileSVG.vue'
+import UpSVG from '../svg/UpSVG.vue'
+import DownSVG from '../svg/DownSVG.vue'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.js',
@@ -239,12 +241,6 @@ function goPdfPage(direction) {
   }
 }
 
-function handlePdfDownload() {
-  if (pdfPreviewState.value.downloadUrl) {
-    window.open(pdfPreviewState.value.downloadUrl, '_blank')
-  }
-}
-
 async function handlePubMedSearch() {
   const keyword = pubmedQuery.value.trim()
   if (!keyword) return
@@ -382,25 +378,33 @@ onBeforeUnmount(() => {
       </aside>
 
       <section class="preview-pane">
-        <header class="section-head compact preview-head">
+        <header class="section-head compact preview-head" :class="{ 'preview-head--pdf': activeView === 'pdfs' }">
           <div class="preview-head-main">
             <button v-if="isMobileLayout && activeMobilePane === 'preview'" type="button" class="back-link"
               @click="activeMobilePane = 'list'">返回列表</button>
 
-            <div v-if="activeView === 'pdfs'">
-              <h3>{{ currentPdfDoc?.name || '文档预览' }}</h3>
-            </div>
+            <template v-if="activeView === 'pdfs'">
+              <div>
+                <h3>{{ currentPdfDoc?.name || '文档预览' }}</h3>
+              </div>
 
-            <div v-else>
-              <h3>{{ currentPaper?.journal || '详情' }}</h3>
-            </div>
+              <div class="preview-actions preview-actions--below-title">
+                <span v-if="currentPdfDoc" class="preview-meta">{{ activeCategory || '未分类' }}</span>
+                <a v-if="pdfPreviewState.downloadUrl" class="preview-text-link" :href="pdfPreviewState.downloadUrl"
+                  target="_blank" rel="noopener noreferrer">
+                  下载原文
+                </a>
+              </div>
+            </template>
+
+            <template v-else>
+              <div>
+                <h3>{{ currentPaper?.journal || '详情' }}</h3>
+              </div>
+            </template>
           </div>
 
-          <div v-if="activeView === 'pdfs' && pdfPreviewState.downloadUrl" class="preview-actions">
-            <button type="button" class="secondary-action" @click="handlePdfDownload">下载原文</button>
-          </div>
-
-          <div v-if="activeView === 'pubmed' && currentPaper?.url" class="preview-actions">
+          <div v-if="activeView !== 'pdfs' && currentPaper?.url" class="preview-actions">
             <a class="secondary-action external-link" :href="currentPaper.url" target="_blank"
               rel="noopener noreferrer">
               打开 PubMed
@@ -413,25 +417,27 @@ onBeforeUnmount(() => {
           </div>
 
           <template v-else-if="pdfPreviewState.url">
-            <div class="pdf-preview-toolbar">
-              <span class="preview-meta">{{ activeCategory || '未分类' }}</span>
-              <div class="pdf-page-controls">
-                <button type="button" class="secondary-action small" :disabled="pdfPreviewState.currentPage <= 1"
-                  @click="goPdfPage(-1)">上一页</button>
-                <span class="page-indicator">
-                  {{ pdfPreviewState.totalPages ? `第 ${pdfPreviewState.currentPage} /
-                  ${pdfPreviewState.totalPages} 页` : '加载中...' }}
-                </span>
-                <button type="button" class="secondary-action small"
-                  :disabled="pdfPreviewState.currentPage >= pdfPreviewState.totalPages"
-                  @click="goPdfPage(1)">下一页</button>
-              </div>
-            </div>
-
             <div class="pdf-canvas-shell">
               <div v-if="pdfPreviewState.loading" class="inline-pdf-loading">正在加载 PDF...</div>
               <VuePdfEmbed class="pdf-canvas" :key="pdfPreviewState.url" :source="pdfPreviewState.url"
                 :page="pdfPreviewState.currentPage" @loaded="handlePdfLoaded" />
+
+              <div class="pdf-floating-toolbar" aria-label="PDF 翻页操作">
+                <div class="pdf-page-controls">
+                  <button type="button" class="pdf-float-button icon-action"
+                    :disabled="pdfPreviewState.currentPage <= 1" @click="goPdfPage(-1)">
+                    <UpSVG color="currentColor" />
+                  </button>
+                  <span class="page-indicator">
+                    {{ pdfPreviewState.totalPages ? `第 ${pdfPreviewState.currentPage} /
+                    ${pdfPreviewState.totalPages} 页` : '加载中...' }}
+                  </span>
+                  <button type="button" class="pdf-float-button icon-action"
+                    :disabled="pdfPreviewState.currentPage >= pdfPreviewState.totalPages" @click="goPdfPage(1)">
+                    <DownSVG color="currentColor" />
+                  </button>
+                </div>
+              </div>
             </div>
           </template>
 
@@ -449,7 +455,7 @@ onBeforeUnmount(() => {
 
             <div v-if="displayTypes(currentPaper.pub_type).length" class="paper-detail-types">
               <span v-for="type in displayTypes(currentPaper.pub_type)" :key="type" :class="pillClass(type)">{{ type
-                }}</span>
+              }}</span>
             </div>
 
             <section class="paper-detail-section">
@@ -510,7 +516,12 @@ onBeforeUnmount(() => {
 .preview-head-main {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 12px;
+  min-width: 0;
+}
+
+.preview-head--pdf {
+  align-items: flex-start;
 }
 
 .pane-count,
@@ -657,28 +668,16 @@ onBeforeUnmount(() => {
   flex-direction: column;
 }
 
-.pdf-preview-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--color-border-light);
-  flex-wrap: wrap;
-}
-
 .pdf-page-controls {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
 }
 
 .page-indicator {
-  min-width: 120px;
   text-align: center;
-  font-size: 13px;
-  color: var(--color-text-medium);
+  font-size: 14px;
+  color: var(--color-text-strong);
 }
 
 .pdf-canvas-shell {
@@ -687,6 +686,7 @@ onBeforeUnmount(() => {
   min-height: 0;
   overflow: auto;
   background: var(--color-pdf-surface);
+  padding: 18px 18px 18px;
 }
 
 .pdf-canvas {
@@ -715,6 +715,53 @@ onBeforeUnmount(() => {
   transform: translate(-50%, -50%);
   color: var(--color-text-medium);
   font-size: 14px;
+}
+
+.pdf-floating-toolbar {
+  position: sticky;
+  right: 18px;
+  bottom: 18px;
+  margin-left: auto;
+  width: fit-content;
+  max-width: calc(100% - 24px);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 4px 8px;
+  border: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-bg-base) 50%, transparent);
+  box-shadow: 0 18px 34px rgba(15, 23, 42, 0.16);
+  backdrop-filter: blur(16px);
+  z-index: 2;
+  gap: 4px;
+}
+
+.icon-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.pdf-float-button {
+  border: none;
+  background: transparent;
+  color: var(--color-text-strong);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), transform var(--transition-fast);
+
+  &:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-bg-base) 32%, transparent);
+  }
+
+  &:disabled {
+    opacity: 0.38;
+    cursor: not-allowed;
+  }
 }
 
 .paper-preview-body {
@@ -813,7 +860,34 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
   flex-shrink: 0;
+}
+
+.preview-actions--below-title {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.preview-text-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  color: var(--color-primary);
+  font-size: 14px;
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  transition: color var(--transition-fast), opacity var(--transition-fast);
+
+  &:hover {
+    color: var(--color-primary);
+  }
+
+  &:active {
+    opacity: 0.75;
+  }
 }
 
 .external-link {
@@ -877,6 +951,17 @@ onBeforeUnmount(() => {
   .paper-detail-title {
     font-size: 20px;
   }
+
+  .pdf-floating-toolbar {
+    right: 14px;
+    bottom: 14px;
+    padding: 8px 10px;
+  }
+
+  .page-indicator {
+    min-width: 104px;
+    font-size: 12px;
+  }
 }
 
 @media (max-width: 640px) {
@@ -890,7 +975,6 @@ onBeforeUnmount(() => {
   }
 
   .pdf-category-tabs,
-  .pdf-preview-toolbar,
   .paper-preview-body {
     padding-left: 12px;
     padding-right: 12px;
@@ -906,11 +990,44 @@ onBeforeUnmount(() => {
   }
 
   .page-indicator {
-    min-width: 96px;
+    min-width: 88px;
+    font-size: 12px;
   }
 
   .pdf-canvas-shell {
-    padding: 12px;
+    padding: 12px 12px 88px;
+  }
+
+  .pdf-floating-toolbar {
+    right: 12px;
+    bottom: 12px;
+    padding: 7px 8px;
+  }
+
+  .preview-meta,
+  .page-indicator {
+    min-width: auto;
+  }
+
+  .pdf-page-controls {
+    gap: 6px;
+  }
+
+  .icon-action {
+    width: 34px;
+    height: 34px;
+  }
+
+  .preview-actions {
+    justify-content: flex-end;
+  }
+
+  .preview-actions--below-title {
+    justify-content: flex-start;
+  }
+
+  .preview-text-link {
+    min-height: 32px;
   }
 }
 </style>

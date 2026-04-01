@@ -86,7 +86,7 @@ onBeforeUnmount(() => {
         :aria-haspopup="tab.children?.length ? 'menu' : undefined" @click.stop="handleTabClick(tab)">
         <span>{{ tab.label }}</span>
         <small v-if="tab.key === activeTab && activeSubtitles[tab.key]" class="tab-subtitle">{{ activeSubtitles[tab.key]
-        }}</small>
+          }}</small>
         <span v-if="tab.children?.length" class="tab-caret" aria-hidden="true"></span>
       </button>
 
@@ -149,8 +149,11 @@ onBeforeUnmount(() => {
   &.active,
   &.expanded {
     color: var(--color-primary);
-    border-bottom-color: var(--color-primary);
     background: transparent;
+  }
+
+  &.active {
+    border-bottom-color: var(--color-primary);
   }
 }
 
