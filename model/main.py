@@ -23,7 +23,7 @@ from makeData.retrieve import UnifiedSearchEngine, CONFIG
 from config.config_loader import get_prompt_manager, get_report_manager
 from vision_service import VisionAnalysisService
 
-from langchain_dashscope import ChatTongyi
+from langchain_openai import ChatOpenAI
 from utils.context_summary import ConversationSummaryService
 from error_codes import build_error_event, format_error_log
 
@@ -77,8 +77,12 @@ def init_all_resources():
     report_mgr = get_report_manager()
     logging.info(f">>> 可用报告模式: {report_mgr.list_modes()}")
 
-    llm_max = ChatTongyi(model="qwen-max")
-    llm_plus = ChatTongyi(model="qwen-plus")
+    # DashScope OpenAI 兼容模式：与 langchain_openai.ChatOpenAI 直接对接，
+    # 替代已与 langchain-core 1.x 不兼容的 langchain_dashscope.ChatTongyi
+    _dashscope_base = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    _dashscope_key  = os.getenv("DASHSCOPE_API_KEY")
+    llm_max  = ChatOpenAI(model="qwen-max",  base_url=_dashscope_base, api_key=_dashscope_key)
+    llm_plus = ChatOpenAI(model="qwen-plus", base_url=_dashscope_base, api_key=_dashscope_key)
     context_summary = ConversationSummaryService(
         llm=llm_plus,
         prompt_manager=prompt_mgr

@@ -6,7 +6,7 @@ import hashlib
 import time
 from typing import List
 from dotenv import load_dotenv
-from langchain_dashscope import DashScopeEmbeddings
+from langchain_openai import OpenAIEmbeddings
 from http import HTTPStatus
 import dashscope
 
@@ -133,8 +133,13 @@ from langchain_chroma import Chroma
 
 def build_or_load_vectorstore(chunks, persist_dir: str):
     logger.info(f"🔌 [VectorStore] 连接: {persist_dir}")
-    # langchain_dashscope 通过环境变量 DASHSCOPE_API_KEY 自动读取密钥
-    embeddings = DashScopeEmbeddings(model="text-embedding-v2")
+    # DashScope OpenAI 兼容模式提供 text-embedding-v2，替代已与 langchain-core 1.x
+    # 不兼容的 langchain_dashscope.DashScopeEmbeddings
+    embeddings = OpenAIEmbeddings(
+        model="text-embedding-v2",
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        api_key=os.getenv("DASHSCOPE_API_KEY"),
+    )
     vectordb = Chroma(
         persist_directory=persist_dir,
         embedding_function=embeddings,

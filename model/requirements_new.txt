@@ -30,7 +30,8 @@ langchain-community==0.4.1
 langchain-openai==1.1.12
 langchain-chroma==1.1.0
 langchain-text-splitters==1.1.1
-langchain_dashscope==0.1.8
+# langchain_dashscope 已移除：0.1.x 依赖 langchain_core.pydantic_v1，与 langchain-core 1.x 不兼容。
+# DashScope 改用 OpenAI 兼容模式接入（base_url=https://dashscope.aliyuncs.com/compatible-mode/v1）
 langchain-classic==1.0.3
 langgraph==1.1.4
 langgraph-checkpoint==4.0.1
@@ -51,6 +52,11 @@ pandas==3.0.0
 scikit-learn==1.8.0
 
 # --- NLP / 向量模型 ---
+# ⚠️ torch 安装说明：
+#   本项目所有推理均通过 DashScope API 完成，torch 仅作为 transformers 的传递依赖，
+#   无需 CUDA 支持。服务器（Ubuntu）请用以下命令安装 CPU-only 版本，避免下载 2GB CUDA 包：
+#     pip install torch==2.1.0 --index-url https://download.pytorch.org/whl/cpu
+#   macOS / 本地开发环境直接 pip install torch==2.1.0 即可（自动选 CPU wheel）。
 transformers==4.38.2
 sentence-transformers==2.7.0
 torch==2.1.0
