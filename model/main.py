@@ -81,10 +81,15 @@ def init_all_resources():
     # 替代已与 langchain-core 1.x 不兼容的 langchain_dashscope.ChatTongyi
     _dashscope_base = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     _dashscope_key  = os.getenv("DASHSCOPE_API_KEY")
-    llm_max  = ChatOpenAI(model="qwen-max",  base_url=_dashscope_base, api_key=_dashscope_key)
-    llm_plus = ChatOpenAI(model="qwen-plus", base_url=_dashscope_base, api_key=_dashscope_key)
+    # 显式关闭 thinking 模式：Qwen3 系列默认开启 thinking，会在正式回答前生成大量
+    # 不可见的思维链 token，导致响应时间大幅增加。全部关闭后速度大幅提升。
+    _no_thinking = {"extra_body": {"enable_thinking": False}}
+    llm_max   = ChatOpenAI(model="qwen-max",   base_url=_dashscope_base, api_key=_dashscope_key, model_kwargs=_no_thinking)
+    llm_plus  = ChatOpenAI(model="qwen-plus",  base_url=_dashscope_base, api_key=_dashscope_key, model_kwargs=_no_thinking)
+    llm_turbo = ChatOpenAI(model="qwen-turbo", base_url=_dashscope_base, api_key=_dashscope_key, model_kwargs=_no_thinking)
+    # 对话摘要用 turbo：摘要压缩任务，不需要复杂推理
     context_summary = ConversationSummaryService(
-        llm=llm_plus,
+        llm=llm_turbo,
         prompt_manager=prompt_mgr
     )
 
@@ -118,7 +123,8 @@ def init_all_resources():
         llm_critic=llm_plus,
         medical_assistant=medical_assistant,
         prompt_manager=prompt_mgr,
-        report_manager=report_mgr
+        report_manager=report_mgr,
+        llm_turbo=llm_turbo,
     )
 
     # 初始化影像分析服务（VL 模型懒加载，首次调用时连接 DashScope）

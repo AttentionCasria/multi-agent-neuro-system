@@ -112,9 +112,12 @@ class qwenAgent:
         medical_assistant,
         prompt_manager: PromptManager,
         report_manager: ReportTemplateManager,
+        llm_turbo=None,
     ):
         self.llm_proposer = llm_proposer
         self.llm_critic   = llm_critic
+        # llm_turbo 用于简单分类任务（intent）；未传入时回退到 llm_critic
+        self.llm_turbo    = llm_turbo or llm_critic
         self.medical_assistant = medical_assistant
         self.prompts = prompt_manager
         self.reports = report_manager
@@ -200,7 +203,8 @@ class qwenAgent:
     # ── 节点实现 ──────────────────────────────────────────────────────────────
 
     async def _node_intent(self, state: ClinicalState) -> ClinicalState:
-        chain = _INTENT_PROMPT | self.llm_critic | StrOutputParser()
+        # 三分类任务，用 llm_turbo（qwen-turbo）即可
+        chain = _INTENT_PROMPT | self.llm_turbo | StrOutputParser()
         content = await chain.ainvoke({"case_text": state["case_text"]})
         result = self._parse_json(content, {"type": "irrelevant"})
         intent_type = result.get("type", "irrelevant")
@@ -233,7 +237,8 @@ class qwenAgent:
             HumanMessage(content=knowledge_prompt),
         ]
         content = ""
-        async for chunk in self.llm_proposer.astream(messages):
+        # knowledge 问答直接输出给用户，qwen-plus 质量足够，无需 max
+        async for chunk in self.llm_critic.astream(messages):
             c = chunk.content if hasattr(chunk, "content") else str(chunk)
             content += c
         return {"report": content}
@@ -273,12 +278,15 @@ class qwenAgent:
         return {"evidence": self._truncate(evidence, MAX_EVIDENCE_CHARS)}
 
     async def _node_reason(self, state: ClinicalState) -> ClinicalState:
+        uq = state.get("user_questions", [])
+        logger.info(f"[reason] user_questions count={len(uq)}, items={uq}")
         proposal, critique = await self._parallel_propose_and_critique(
             state.get("context", {}),
             state.get("evidence", ""),
             state.get("all_info", ""),
-            state.get("user_questions", []),
+            uq,
         )
+        logger.info(f"[reason] proposal_len={len(proposal)}, critique_len={len(critique)}")
         return {"proposal": proposal, "critique": critique}
 
     async def _node_report(self, state: ClinicalState) -> ClinicalState:
@@ -350,6 +358,11 @@ class qwenAgent:
         name         = event.get("name", "")
         meta         = event.get("metadata", {})
         langgraph_node = meta.get("langgraph_node", "")
+
+        # 调试：打印所有 chain 级事件，确认节点名与输出结构
+        if evt in ("on_chain_start", "on_chain_end"):
+            logger.info(f"[DBG] evt={evt} name={name!r} langgraph_node={langgraph_node!r} "
+                        f"output_keys={list(event.get('data',{}).get('output',{}).keys()) if isinstance(event.get('data',{}).get('output'),dict) else type(event.get('data',{}).get('output')).__name__}")
 
         # ── 节点开始 ──────────────────────────────────────────────────────────
         if evt == "on_chain_start" and name in _NODE_LABELS and show_thinking:
@@ -622,7 +635,8 @@ class qwenAgent:
         - 建议优先级
         """
 
-        proposer_task = self.llm_proposer.ainvoke([
+        # proposer 为中间推理步骤，结果由 _node_report 二次处理，qwen-plus 足够
+        proposer_task = self.llm_critic.ainvoke([
             SystemMessage(content=self.reports.system_role),
             HumanMessage(content=proposer_prompt),
         ])
@@ -630,7 +644,9 @@ class qwenAgent:
             SystemMessage(content=self.reports.system_role),
             HumanMessage(content=pre_critic_prompt),
         ])
+        logger.info("[propose] 开始等待 asyncio.gather (proposer + critic)...")
         proposer_resp, critic_resp = await asyncio.gather(proposer_task, critic_task)
+        logger.info(f"[propose] gather 完成，proposer_len={len(proposer_resp.content)}, critic_len={len(critic_resp.content)}")
         proposal_text = proposer_resp.content
         critic_text   = critic_resp.content
 
@@ -660,8 +676,11 @@ class qwenAgent:
         输出最终答案。
         """
 
-        final_resp = await self.llm_proposer.ainvoke([
+        logger.info(f"[propose] 开始第三次 ainvoke (integration)，prompt_len={len(final_prompt)}")
+        # integration 仅做合并校对，无需 max 级别能力，改用 llm_critic（qwen-plus）降低限流风险
+        final_resp = await self.llm_critic.ainvoke([
             SystemMessage(content=self.reports.system_role),
             HumanMessage(content=final_prompt),
         ])
+        logger.info(f"[propose] integration 完成，result_len={len(final_resp.content)}")
         return final_resp.content, critic_text

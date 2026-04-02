@@ -74,7 +74,7 @@ public class AIStreamingServiceImpl implements AIStreamingService {
     /** 发送给模型的历史上下文最大字符数，防止超出模型 Token 上限 */
     private static final int MAX_HISTORY_CHARS = 8000;
     /** 流式响应逐块最大等待时间，超时视为模型挂起 */
-    private static final Duration CHUNK_TIMEOUT = Duration.ofSeconds(120);
+    private static final Duration CHUNK_TIMEOUT = Duration.ofSeconds(300);
     /** 单行 SSE 数据最大字符数（1 MB），超过此限制的行将被截断并发送 warning 事件 */
     private static final int MAX_LINE_LENGTH = 1_048_576;
     /** 单个持久化任务最大重试次数，超过后永久丢弃（可接入告警） */

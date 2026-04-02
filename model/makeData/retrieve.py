@@ -6,12 +6,48 @@ import hashlib
 import time
 from typing import List
 from dotenv import load_dotenv
-from langchain_openai import OpenAIEmbeddings
+from langchain_core.embeddings import Embeddings
 from http import HTTPStatus
 import dashscope
 
 load_dotenv()
 logger = logging.getLogger(__name__)
+
+
+class DashScopeEmbeddings(Embeddings):
+    """直接调用 dashscope.TextEmbedding SDK，绕过 openai v2.x 格式变更问题"""
+
+    def __init__(self, model: str = "text-embedding-v2"):
+        self.model = model
+        self.api_key = os.getenv("DASHSCOPE_API_KEY")
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        result = []
+        # DashScope 单批最多 25 条
+        for i in range(0, len(texts), 25):
+            batch = texts[i:i + 25]
+            resp = dashscope.TextEmbedding.call(
+                model=self.model,
+                input=batch,
+                api_key=self.api_key,
+            )
+            if resp.status_code == HTTPStatus.OK:
+                for item in resp.output["embeddings"]:
+                    result.append(item["embedding"])
+            else:
+                raise ValueError(f"DashScope embedding 失败: {resp.code} - {resp.message}")
+        return result
+
+    def embed_query(self, text: str) -> List[float]:
+        resp = dashscope.TextEmbedding.call(
+            model=self.model,
+            input=text,
+            api_key=self.api_key,
+        )
+        if resp.status_code == HTTPStatus.OK:
+            return resp.output["embeddings"][0]["embedding"]
+        else:
+            raise ValueError(f"DashScope embedding 失败: {resp.code} - {resp.message}")
 
 # ==========================================
 # 配置
@@ -135,11 +171,7 @@ def build_or_load_vectorstore(chunks, persist_dir: str):
     logger.info(f"🔌 [VectorStore] 连接: {persist_dir}")
     # DashScope OpenAI 兼容模式提供 text-embedding-v2，替代已与 langchain-core 1.x
     # 不兼容的 langchain_dashscope.DashScopeEmbeddings
-    embeddings = OpenAIEmbeddings(
-        model="text-embedding-v2",
-        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-        api_key=os.getenv("DASHSCOPE_API_KEY"),
-    )
+    embeddings = DashScopeEmbeddings(model="text-embedding-v2")
     vectordb = Chroma(
         persist_directory=persist_dir,
         embedding_function=embeddings,

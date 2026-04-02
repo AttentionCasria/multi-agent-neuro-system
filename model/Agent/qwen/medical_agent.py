@@ -213,7 +213,8 @@ class MedicalReActAgent:
             prompt_text = self._FALLBACK_EVIDENCE_PROMPT.format(
                 question=question, evidence=evidence
             )
-        resp = self.llm_main.invoke([
+        # 证据合成为中间步骤，结果传给后续节点处理，llm_fast（qwen-plus）足够
+        resp = self.llm_fast.invoke([
             SystemMessage(content="你是循证医学专家。请用中文回答。"),
             HumanMessage(content=prompt_text)
         ])
