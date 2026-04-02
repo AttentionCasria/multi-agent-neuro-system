@@ -285,7 +285,7 @@ async def get_model_result(request: QueryRequest):
 
     # sse-starlette 的 ping_interval 每 15 秒发送 SSE 注释心跳（": ping\n\n"），
     # 替代原来的 asyncio.wait 业务层心跳，Java WebFlux 过滤掉该注释帧即可
-    return EventSourceResponse(generate(), ping_interval=15)
+    return EventSourceResponse(generate(), ping=15)
 
 
 @app.post("/ai/analyze", response_model=AnalyzeResponse)
