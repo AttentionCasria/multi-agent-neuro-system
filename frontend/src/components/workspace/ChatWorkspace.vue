@@ -481,7 +481,7 @@ function handleCopy(msg) {
   if (!text) return
 
   if (navigator.clipboard?.writeText) {
-    navigator.clipboard.writeText(text).then(() => alert('复制成功')).catch(() => fallbackCopy(text))
+    navigator.clipboard.writeText(text).catch(() => fallbackCopy(text))
     return
   }
 
@@ -497,7 +497,6 @@ function fallbackCopy(text) {
   textarea.select()
   document.execCommand('copy')
   document.body.removeChild(textarea)
-  alert('复制成功')
 }
 
 function formatDateTime(value) {
