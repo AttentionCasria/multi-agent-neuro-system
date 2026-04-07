@@ -15,6 +15,7 @@ from sse_starlette.sse import EventSourceResponse
 import uvicorn
 
 from Agent.qwen.qwen_agent import qwenAgent
+from Agent.bailian.health_risk_analyzer import HealthRiskAnalyzer
 from services.pubmed_service import PubMedService
 from Agent.qwen.qwen_assistant import MedicalAssistant
 from utils.naming_model import NamingModel
@@ -282,19 +283,16 @@ async def get_model_result(request: QueryRequest):
 async def analyze_patient_health_risk(request: AnalyzeRequest):
     verify_token(request.token)
 
-    if not resources["model"]:
-        raise HTTPException(status_code=503, detail="Model service not ready")
-
     patient_text = request.data.strip()
     if not patient_text:
         raise HTTPException(status_code=422, detail="data cannot be empty")
 
-    logging.info("=== 开始健康风险分析请求 ===")
+    logging.info("=== 开始健康风险分析请求（HealthRiskAnalyzer）===")
     logging.info(f"patientId: {request.patientId}")
     logging.info(f"data: {patient_text[:200]}")
-    logging.info(f"all_info: {request.all_info[:200] if request.all_info else ''}")
 
-    result = await resources["model"].analyze_patient_risk_fast(patient_text)
+    # 独立的分析模块，不依赖主推理链
+    result = await HealthRiskAnalyzer().analyze(patient_text)
 
     return {
         "code": 1,
