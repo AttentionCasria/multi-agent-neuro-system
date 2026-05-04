@@ -1,4 +1,4 @@
-# NeuroAgentSystem
+# NeuroMultiAgentSystem
 
 **多智能体深度检索医疗辅助系统 (Multi-Agent Deep Retrieval Model)**
 
