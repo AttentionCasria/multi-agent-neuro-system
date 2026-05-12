@@ -108,4 +108,4 @@
    - Java遵循 WebFlux 响应式范式，Python全程使用 `async/await`，前端遵循 Vue 3 Composition API。所有通信必须兼容现有的 SSE 数据结构。
 3. **本地启动**：
    - **后端**: 修改 `backend/src/main/resources/application.yml` 中的 MySQL 和 Redis 连接，运行 `MyServerApplication.java`。
-   - **前端**: 进入 `frontend/` 目录执行 `npm install` 与 `npm run dev`，默认代理至 `8080` 端口。 
+   - **前端**: 进入 `frontend/` 目录执行 `npm install` 与 `npm run dev`，默认代理至 `8080` 端口。  
