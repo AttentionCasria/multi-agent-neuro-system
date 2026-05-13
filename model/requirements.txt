@@ -1,40 +1,131 @@
+```txt
+# =========================
+# Web Framework
+# =========================
 fastapi==0.128.0
-uvicorn==0.40.0
+uvicorn[standard]==0.40.0
+starlette==0.50.0
+sse-starlette==2.1.3
 
-langchain==0.1.20
-langchain-community==0.0.38
+# =========================
+# LangChain Ecosystem
+# =========================
+langchain==0.2.16
+langchain-community==0.2.16
+langchain-core==0.2.38
+langchain-openai==0.1.25
 langchain-chroma==0.1.4
-langchain-openai==0.1.7
-langchain-core>=0.1.0
-langgraph>=0.0.1
 
+langgraph==0.2.20
+
+# =========================
+# Vector Database
+# =========================
 chromadb==0.5.23
+chroma-hnswlib==0.7.6
 
-dashscope==1.25.9
+# =========================
+# LLM APIs
+# =========================
 openai==1.109.1
+dashscope==1.25.9
 
-pydantic==2.12.5
-PyJWT==2.10.1
-
+# =========================
+# Transformers / Embedding
+# =========================
 transformers==4.38.2
 sentence-transformers==2.7.0
+tokenizers==0.15.2
+huggingface-hub==0.23.5
+safetensors==0.4.3
 
-torch>=2.2.0
+# =========================
+# Torch
+# 注意：
+# 不要写 torch
+# 手动安装 CUDA 版
+# =========================
 
+# =========================
+# Scientific Computing
+# =========================
 numpy==1.26.4
 pandas==2.2.2
 scikit-learn==1.5.2
+scipy==1.13.1
 
-pdfplumber==0.11.9
+# =========================
+# Tokenizer
+# =========================
+tiktoken==0.7.0
+regex==2024.11.6
 
+# =========================
+# Validation / Config
+# =========================
+pydantic==2.12.5
+pydantic-settings==2.6.1
 python-dotenv==1.2.1
+PyYAML==6.0.2
+
+# =========================
+# HTTP / Async
+# =========================
+httpx==0.28.1
+httpcore==1.0.9
 requests==2.32.5
-httpx>=0.27.0
+aiohttp==3.10.11
+anyio==4.13.0
 
-rank_bm25==0.2.2
+# =========================
+# PDF / Document Parsing
+# =========================
+pdfplumber==0.11.9
+pdfminer.six==20240706
+pypdf==4.3.1
+pypdfium2==4.30.0
 
-# 解决 wheel 与 langchain-core 关于 packaging 的版本冲突
-packaging==23.2
-wheel==0.43.0
+# =========================
+# Retrieval
+# =========================
+rank-bm25==0.2.2
 
-sse-starlette>=2.0.0
+# =========================
+# Database / ORM
+# =========================
+SQLAlchemy==2.0.36
+
+# =========================
+# JSON / Serialization
+# =========================
+orjson==3.10.18
+ujson==5.10.0
+
+# =========================
+# Authentication / Security
+# =========================
+PyJWT==2.10.1
+bcrypt==4.2.0
+cryptography==43.0.3
+python-multipart==0.0.12
+
+# =========================
+# WebSocket / Streaming
+# =========================
+websockets==13.1
+
+# =========================
+# Utilities
+# =========================
+tqdm==4.67.3
+tenacity==8.5.0
+typing-extensions==4.15.0
+packaging==24.2
+click==8.1.7
+rich==13.9.4
+
+# =========================
+# Optional
+# =========================
+pillow==11.0.0
+```
