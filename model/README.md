@@ -1,198 +1,131 @@
-基于你提供的项目代码片段、错误日志以及文件结构路径，以下即为专门为你生成的详细 **README.md** 文档。
+# MedLLM / NeuroMultiAgentSystem
+**多智能体深度检索医疗辅助系统 (Multi-Agent Deep Retrieval Model)**
 
-该文档包含了项目背景、核心流程、技术栈、目录结构、环境配置以及亮点说明。
+**MedLLM** (NeuroMultiAgentSystem) 是一个面向脑卒中临床场景的智能医疗辅助系统，旨在通过人工智能技术提升临床辅助决策支持能力。系统以大语言模型为核心，融合检索增强生成（RAG）、多智能体推理与医学知识库，实现了从症状输入到辅助分析与建议输出的完整闭环。
 
-***
+与传统通用问答系统不同，本项目并非简单依赖模型生成结果，而是以权威医学文献与临床指南为知识底座，通过“检索—重排—推理—评估”的结构化流程，使每一次回答都具备明确证据来源与逻辑依据。系统强调**“证据先行、过程可解释、结果可验证”**，在保证智能化水平的同时，显著提升了医学场景下的可靠性与安全性。
 
-# MedLLM - 基于大模型的智能医疗问答系统
+## 🌟 项目亮点与创新
 
-**MedLLM** 是一个基于 **RAG (检索增强生成)** 技术与 **LangChain Agent** 架构的垂直领域医疗问答系统。它利用通义千问 (Qwen-Max) 作为核心推理引擎，结合本地构建的医疗指南知识库，能够针对复杂的医疗问题（如临床指南、用药建议、症状分析）提供基于证据的精准回答。
-
-## 🌟 项目亮点
-
-1.  **ReAct/Tool Calling 智能代理**
-    *   抛弃传统的“检索-问答”线性逻辑，采用 Agent 模式。系统能自主判断是否需要查询知识库，甚至能够处理多步推理任务。
-    *   使用了 LangChain 最新的 `create_tool_calling_agent` 架构，支持函数调用 (Function Calling)，使模型与工具的交互更稳定。
-
-2.  **严谨的医疗 RAG 流程**
-    *   集成 `UnifiedSearchEngine`，针对医疗数据进行了专门的清洗和索引。
-    *   配置了 `temperature=0` 的模型参数，最大程度降低大模型的幻觉（Hallucinations），确保医疗建议的严肃性。
-
-3.  **鲁棒的工程实现**
-    *   具备完善的错误处理机制 (`handle_parsing_errors=True`)，当模型输出格式异常时能自动修正。
-    *   针对检索服务增加了异常防护，防止因检索引擎未启动导致的系统崩溃。
-
-4.  **现代化技术栈**
-    *   基于 **FastAPI** 的高性能异步接口服务。
-    *   对接阿里 **Qwen-Max (通义千问)** 旗舰模型，中文医疗语义理解能力强。
+1.  **证据驱动的医学推理范式与定制 RAG**
+    *   将证据获取前置，实现了从“模型主导”向“证据主导”的转变，降低幻觉风险。基于混合检索（向量 + BM25）策略，优先返回权威指南与最新文献。强化对脑卒中时间窗、溶栓/取栓指征等关键信息的提取。
+2.  **多智能体协同的安全推理机制 (Proposer-Critic-Integrator)**
+    *   **Proposer (生成智能体)**：基于证据生成初步诊疗方案。
+    *   **Critic (审查智能体)**：独立执行风险审查，识别临床高风险点（如时间窗陷阱、禁忌症）。
+    *   **Integrator (整合反思智能体)**：融合反思生成最终安全结论。模拟“提出方案→上级把关→最终复盘”的真实流程。
+3.  **大模型高级 QA 自建引擎与重排优化**
+    *   在知识库层引入批处理扩写：系统精读医疗 PDF 并自动提炼生成高质量 QA 对。结合阿里 `gte-rerank` 进行深度语境打分与证据压缩，并在引用中进行文献与页码明确溯源。
+4.  **工程化生态与全链路流式推送 (SSE Pipeline)**
+    *   拥有可见的思考过程（Thinking Step）推理展示以及动态多路分发机制。
+    *   **架构闭环**：结合了基于 WebFlux 与 Redis 并发控制的后台以及 Vue3 流式渲染界面。
 
 ---
 
-## 🛠️ 技术栈
+## 🛠️ 技术栈与全链路架构
 
-*   **编程语言**: Python 3.10+
-*   **Web 框架**: FastAPI, Uvicorn
-*   **LLM 编排**: LangChain Core, LangChain Community
-*   **大模型 (LLM)**: Alibaba Tongyi Qwen-Max (`ChatTongyi`)
-*   **检索/向量库**: 自研/封装的 `UnifiedSearchEngine` (基于 FAISS 或 Chroma)
-*   **开发环境**: PyCharm, Anaconda (Windows)
+本项目采用典型的前后端分离与模型服务独立部署的三层架构，构成了极具扩展性的 CDSS（临床决策支持系统）原型：
+
+*   **模型服务核心 (Python层 - 本仓库涉及主体)**: 高并发 FastAPI, LangChain Agent 架构, Qwen-Max大模型, Chroma/BM25 混合向量检索
+*   **后端服务层**: Java 17 + Spring Boot 3 + Spring WebFlux 响应式框架, MySQL 8.0, Redis + Redisson 分布式控制与 JWT 鉴权
+*   **前端展示层**: Vue 3 (Composition API), Vite, Pinia, 以及流式数据的实时图文响应渲染
+*   **📡 数据流向管道**: 用户提问 ➡️ Java鉴权与请求隔离 ➡️ WebClient 异步 ➡️ FastAPI ➡️ Python Agent 流式产出(yield) ➡️ asyncio.Queue ➡️ Java(Flux持续推送) ➡️ Vue(ReadableStream实时渲染) 
 
 ---
 
 ## 📂 项目目录结构
 
 ```text
-MedLLM/
-├── Agent/
-│   └── qwen/
-│       ├── medicalAgent.py          # (旧) 医疗 Agent 定义
-│       ├── medicalAgentExecutor.py  # [核心] 当前使用的 Agent 执行器，集成 Tool Calling
-│       └── qwenAssistant.py         # 助手类封装
-├── makeData/
-│   ├── dataRetrieve.py              # 统一检索引擎 (UnifiedSearchEngine) 实现
-│   └── ...                          # 数据处理与向量化脚本
-├── main.py                          # FastAPI 入口文件
-├── requirements.txt                 # 项目依赖
-└── README.md                        # 说明文档
+D:\pycharmProject\neuro-multi-agent
+├── Agent/               # [核心模型能力]：各模块的大语言模型推理链路（Qwen、Bailian）
+├── config/              # [配置中心]：存放统一规则 Prompt 的 YAML 与配置加载器
+├── Data/                # [数据资产]：如 ./documents 存放需要进行 RAG 识别的原版医疗 PDF 讲义与指南
+├── makeData/            # [知识加工]：文档切割、QA片段生成扩展和统一向量建立中心 (retrievers.py 等)
+├── services/            # [外部/专用服务]：如 PubMed 文章搜索服务、视觉大模型识别服务 (vision_service.py)
+├── utils/               # [工具库]：各类基础通用工具，如报错标准化 (error_codes.py)、token计算、命名归纳等
+├── evaluation/          # 🌟[评测专区]：跑分机制与造出来的上下文片段都放在这独立运行
+├── data_exports/        # 🌟[实验归档]：存放所有系统在评测与处理后生成的实验对照记录 `.csv` 结果合集
+├── tests/               # 🌟[测试验证]：如测试 RAG (test_rag.py) 和测试接口流式输出 (test_api_client.py)
+│
+├── chroma_db_unified/   # ChromaDB 向量本地化持久存储端
+├── requirements.txt     # Python 环境依赖清单
+├── .env                 # 您的本地环境安全密钥记录配置
+└── main.py              # 🚀[入口网关]：全局 FastAPI 路由以及启动主程序入口
 ```
 
 ---
 
-## 🔄 系统工作流程 (Pipeline)
+## 🔄 系统核心链路流程
 
-1.  **用户请求 (Request)**: 用户通过 API 发送医疗问题（例如："帕金森病早期的推荐治疗方案是什么？"）。
-2.  **Agent 规划 (Planning)**:
-    *   `MedicalAgent` 接收输入。
-    *   Prompt System 设定角色为“专业医疗助手”。
-    *   LLM (Qwen-Max) 分析意图，判断是否需要调用工具。
-3.  **工具调用 (Tool Execution)**:
-    *   如果需要外部知识，模型生成调用 `search_medical_guidelines` 的指令。
-    *   `UnifiedSearchEngine` 在本地向量库中检索 Top-K 相关文档（如临床试验结论、指南原文）。
-4.  **上下文合成 (Synthesis)**:
-    *   检索到的证据片段作为 Observation 返回给 Agent。
-    *   Agent 将原始问题 + 检索到的证据 + 历史对话 重新整合。
-5.  **生成回答 (Response)**:
-    *   LLM 基于事实证据生成最终回答，并在前端返回。
+1.  **用户提问触发**：前台发来病理文本（甚至带图片）。鉴权通过（JWT 校验）后建立 SSE 长连接。
+2.  **诊断与智能分发**：系统评估请求的 `question` 和 `all_info`(病史上下文)。利用 Naming 模型并发启动对该次聊天的病种标记。
+3.  **大混合双重检索 (Hybrid RAG)**：调用 `makeData/retrievers.py` 中的 `UnifiedSearchEngine` 从本地检索与当前体征关联度高的《临床指南指南》段落或提前做好的 QA 衍生库片段。
+4.  **大模型思考与推测**：医学助理 Agent 汇集所有的精准片段作为 `background_info` 给到 Qwen-Max 进行多步严谨推演，将有价值的思考块 `thinking` 逐步以串流发送至前台。
+5.  **总结反刍更新**：流式推送完结论后，再启动后台打杂小模型总结这次对话重点更新回 `all_info`，为用户的多轮就诊做足铺垫。
 
 ---
 
-## 🚀 快速开始
+## 🚀 快速接入
 
-### 1. 环境准备
+### 1. 环境准备与依赖安装
 
-确保已安装 Anaconda 或 Python 环境。
+建议通过 Anaconda 新建虚拟环境屏蔽本机干扰。
 
 ```bash
-# 创建虚拟环境
-conda create -n Medllm python=3.10
-conda activate Medllm
+conda create -n neuro-model python=3.10
+conda activate neuro-model
 
-# 安装依赖 (建议根据报错补充具体版本，尤其是 langchain-community)
-pip install langchain langchain-core langchain-community dashscope fastapi uvicorn
+pip install -r requirements.txt
 ```
 
-### 2. 配置 API Key
+### 2. 本地秘钥 `.env` 配置
 
-需要在环境变量中配置通义千问的 API Key。
-*   **Windows Powershell**: `$env:QWEN-API-KEY="sk-xxxxxxxx"`
-*   或者在代码根目录创建 `.env` 文件。
+在根目录新建或者修改 `.env` 文件，加入阿里云百炼 API 的密钥和 JWT 认证种子：
 
-### 3. 代码修正说明
+```env
+DASHSCOPE_API_KEY="sk-您自己在阿里云百炼平台申请的秘钥"
+SECRET_KEY="您自定义防止用户越权访问后端的随机字符串"
+```
 
-针对日志中出现的 `NotImplementedError` (bind_tools 错误)，请确保 `Agent/qwen/medicalAgentExecutor.py` 使用了正确的导入（如当前代码片段所示），并且 `langchain-community` 包已更新到最新版本，因为旧版本的 `ChatTongyi` 可能不支持 `bind_tools`。
+### 3. 数据知识库建设 (RAG 核心底座)
 
-### 4. 启动服务
+把医疗领域的临床指南等 PDF 文件统一放入 `Data/documents/` 文件夹。
 
-在项目根目录下运行：
+**启动时的大模型打底入库过程揭秘**：
+当您第一次启动系统或更换了新一批文档时，系统底层的 `makeData/retrievers.py` 会做以下一系列重量级操作：
+1. **自动递归分块 (Recursive Chunking)**：程序会采用 512 字长配 128 字重叠的规则，跨层级用段落、句号作为自然分割符将几十个 PDF `split_documents` 切成上千条长块。
+2. **大模型 QA 衍生 (AI Batch QA Generation)**：为防止干涩长段落不易被召回，如果启用了 `"enable_qa_generation": True`，系统会将这上千页纯文本块每10条打包发送给底层的 Qwen-Turbo，用模型独有的归纳能力从里头“反向做题”，提取出几百条 `Q: ...? A: ...` 并打上原文页码标签！
+3. **混合双索引编织 (Dual-Indexing)**：最后将上述数千条“原生块”+“造出的 QA”进行向量化放进独立的 ChromaDB，另外在内存挂载高频词组的 BM25 索引。这样庞大的底座就造好了！
 
+### 4. 启动与测试
+
+首选在终端 `A` 拉起总网关服务：
 ```bash
 python main.py
+# 服务会默认监听 0.0.0.0:8000
 ```
-或者使用 uvicorn 直接启动：
+待其控制台输出初始化组装就绪后，新开终端 `B` 进行各类子项目测试：
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+# 测试核心多智能体和临床指南 RAG 推测的流式问诊能力 
+python tests/test_api_client.py 
+
+# 跳过网络直接测本地向量数据库召回水平的独立脚本
+python tests/test_rag.py
 ```
 
 ---
 
-## 📝 API 接口示例
+## 📝 核心 API
 
-### 1. 流式临床推理
+### 主要推理流：`/model/get_result`
+- 特性：结合多智能体与RAG对重症、急诊情况分析。
+- 协议：SSE
+- 参数包含：`question` (当前新症状), `all_info` (历史上下文拼接), `report_mode` (诊断模式) 等。
 
-**POST** `/model/get_result`
+### 独立风险归纳：`/ai/analyze`
+- 特性：不需要进行检索，专注于独立分析大段病历评估急用风险。
+- 返回：包括 `riskLevel`, `suggestion`, `analysisDetails` 格式明确的结果。
 
-```json
-{
-  "question": "患者突发言语不清伴右侧肢体无力2小时",
-  "all_info": "",
-  "token": "your-jwt-token",
-  "report_mode": "emergency",
-  "show_thinking": true
-}
-```
-
-### 2. AI 分析病人健康风险
-
-**POST** `/ai/analyze`
-
-```json
-{
-  "patientId": 1,
-  "data": "男，68岁，既往高血压、糖尿病。今日突发头晕伴右侧肢体乏力3小时，血压180/110mmHg。",
-  "all_info": "",
-  "token": "your-jwt-token"
-}
-```
-
-**响应：**
-
-```json
-{
-  "code": 1,
-  "msg": "success",
-  "data": {
-    "riskLevel": "高风险",
-    "suggestion": "建议尽快完善相关检查并由专科医生进一步评估，密切监测病情变化。",
-    "analysisDetails": "血压显著升高，伴突发神经功能缺损表现，结合既往高血压和糖尿病病史，提示存在较高脑血管事件风险。"
-  }
-}
-```
-
-- `patientId`：病人 ID，仅用于业务侧关联。
-- `data`：病人主诉、病史、体征、检查结果等文本。
-- `all_info`：可选的历史上下文补充信息。
-- `token`：必填 JWT，用于和 `/model/get_result` 保持一致的鉴权策略。
-- 返回字段 `riskLevel` 固定为：`低风险` / `中风险` / `高风险`。
-
-### 3. 旧示例
-
-**POST** `/chat`
-
-```json
-{
-  "query": "ropinirole与rotigotine在帕金森早期治疗中的副作用对比",
-  "history": []
-}
-```
-
-**响应:**
-
-```json
-{
-  "response": "根据临床证据显示，在帕金森早期治疗中：\n1. Ropinirole 在改善运动功能方面可能比 Rotigotine 更有效... \n2. 在副作用导致的停药率方面，两者没有显著差异..."
-}
-```
+### 外部补充抓取：`/model/pubmed/search`
+- 特性：连接国家生化信息中心的 API 直接根据症状抓取相关最新外文文章列表。
 
 ---
-
-## ⚠️ 常见问题排查 (Troubleshooting)
-
-1.  **`NotImplementedError` via `bind_tools`**:
-    *   原因：`ChatTongyi` 类在旧版 LangChain 中未实现工具绑定接口。
-    *   解决：`pip install --upgrade langchain-community dashscope`。
-
-2.  **`search_clinical_guidelines` 报错**:
-    *   如果日志显示 "Got unknown type content"，这是 Agent 解析检索内容时的格式问题。当前代码已通过 `handle_parsing_errors=True` 缓解此问题。
-
-3.  **OpenAI 风格代理错误**:
-    *   请务必使用 `create_tool_calling_agent` 而非 `create_openai_functions_agent`，因为 Qwen 的工具调用协议与 OpenAI 不完全兼容，通用工具代理更适配。
