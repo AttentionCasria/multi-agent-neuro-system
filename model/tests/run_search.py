@@ -3,7 +3,7 @@ from app.rag.retrievers import build_or_load_vectorstore, HybridRetriever
 
 
 def main():
-    docs_dir = r"D:\pycharmProject\neuro-multi-agent\Data\documents"
+    docs_dir = r"/data\documents"
 
     docs = load_pdfs_from_dir(docs_dir)
 

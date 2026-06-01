@@ -1,6 +1,7 @@
 import logging
 from typing import List
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,26 @@ class EvidenceRetrievalService:
             )
 
         return "\n\n".join(results)
+
+    async def aretrieve_single(self, query: str) -> str:
+        import asyncio
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self.retrieve_single, query)
+
+    async def aparallel_retrieve(self, queries: List[str]) -> str:
+        import asyncio
+        tasks = [self.aretrieve_single(q) for q in queries]
+        results_list = await asyncio.gather(*tasks, return_exceptions=True)
+
+        parts = []
+        for i, (q, content) in enumerate(zip(queries, results_list)):
+            if isinstance(content, Exception):
+                logger.error(f"检索失败 {q}: {content}")
+                content = ""
+            if content:
+                parts.append(f"### 检索维度{i+1}: {q}\n{content}")
+
+        return "\n\n---\n\n".join(parts)
 
     def parallel_retrieve(self, queries: List[str]) -> str:
 

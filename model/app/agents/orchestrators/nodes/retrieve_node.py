@@ -16,10 +16,7 @@ class RetrieveNode(BaseNode):
         self.medical_assistant = medical_assistant
 
     async def run(self, state: ClinicalState) -> Dict:
-        loop = asyncio.get_event_loop()
-        evidence = await loop.run_in_executor(
-            None,
-            self.medical_assistant.fast_parallel_retrieve,
-            state.clinical_questions,
+        evidence = await self.medical_assistant.afast_parallel_retrieve(
+            state.clinical_questions
         )
         return {"evidence": truncate_text(evidence, MAX_EVIDENCE_CHARS)}

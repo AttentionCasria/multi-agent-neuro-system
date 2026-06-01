@@ -1,0 +1,48 @@
+aiserver:
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    host: ${DB_HOST:127.0.0.1}  # 从环境变量读取
+    port: ${DB_PORT:3306}
+    database: ${DB_NAME:medai}
+    username: root
+    password: ${DB_PASSWORD}  # 必须从环境变量读取
+
+  redis:
+    host: 127.0.0.1
+    port: 6379
+    password: ""
+
+  ai-api:
+    url: ${AI_API_URL:http://127.0.0.1:8000}
+    # ⚠️ 必须设置此环境变量，且与 Python 模型服务的 AI_JWT_SECRET 保持一致
+    shared-jwt-secret: ${AI_API_SHARED_JWT_SECRET}
+
+  alioss:
+    endpoint: ${OSS_ENDPOINT:https://oss-cn-beijing.aliyuncs.com}
+    bucketName: ${OSS_BUCKET:darkside}
+    region: ${OSS_REGION:cn-beijing}
+    access-key-id: ${OSS_ACCESS_KEY_ID:LTAI5tCsXMzZtiBxnUgqKPNA}
+    access-key-secret: ${OSS_ACCESS_KEY_SECRET:Bkp8ixYCRDicOWLeclRqdPvlNoxMiK}
+    # PDF 文档库根路径（ossutil 上传时的目标前缀）
+    document-prefix: ${OSS_DOC_PREFIX:documents/}
+    # 签名 URL 有效期（秒），30 分钟
+    sign-url-expiration: 1800
+
+
+# 修正：使用 mybatis-plus 标签并关闭 ddl
+mybatis-plus:
+  global-config:
+    db-config:
+      ddl: false
+  configuration:
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+    map-underscore-to-camel-case: true
+
+# 生产环境日志
+logging:
+  level:
+    root: INFO
+    com.yourpackage: INFO
+  file:
+    max-size: 100MB
+    max-history: 30  # 保留30天日志

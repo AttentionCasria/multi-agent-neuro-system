@@ -21,8 +21,8 @@ chroma_db/
 vector_store/
 
 # --- 数据文件 ---
-# 根据日志，你的 PDF 文档在 Data/documents 下
-Data/documents/
+# 根据日志，你的 PDF 文档在 data/documents 下
+data/documents/
 # 如果不想上传任何 PDF 或 Excel
 *.pdf
 *.xlsx

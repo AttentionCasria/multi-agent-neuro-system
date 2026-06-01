@@ -1,100 +1,91 @@
 # Neuro-Multi-Agent 项目架构与代码文件说明
 
-经过近期的多智能体架构升级、混合特征抽取的检索增强体系（Dual-RAG）重构以及模块化分类，整个项目已完成高度解耦。以下为全项目系统文件所承担的**功能角色说明文档**（包含各个文件的核心类、函数及其相互联系联系）。
+经过近期的多智能体架构升级、混合特征抽取的检索增强体系（Dual-RAG）重构以及模块化分类，整个项目已完成高度解耦。以下为全项目系统文件所承担的**功能角色说明文档**。
 
 ---
 
 ## 1. 全局入口与服务层
 
 *   **`app/main.py`**
-    *   **作用**：FastAPI 后端服务器入口点。负责注册核心 API 路由、加载中间件，并提供流式输出等外网对接能力。
-    *   **核心类/函数**：
-        *   `init_all_resources()`: 生命周期事件，统一触发模型、向量库、服务的预热与启动。
-        *   `verify_token()`: 权限校验钩子确保接口防刷。
-        *   `QueryRequest`, `AnalyzeRequest`: Pydantic 数据规范类，定义 HTTP 通讯结构。
-    *   **模块联系**：串联起了 `clinical_graph.py` 的推理启动，并初始化底层的 `UnifiedSearchEngine` 与 `PubMedService`。
+    *   **作用**：FastAPI 后端服务器入口点。负责注册核心 API 路由（如分析接口、PubMed接口等），加载全局中间件，提供基于 Server-Sent Events (SSE) 的流式打字机输出接口封装。
 
-*   **`.env` / `requirements.txt` / `README.md`** 
-    *   基础配置控制、第三方依赖以及说明文件。
+*   **`.env`** 
+    *   环境变量文件（存放 API 密钥、数据库路径、端口等鉴权配置）。
+*   **`requirements.txt`** 
+    *   核心 Python 第三方依赖包清单。
+*   **`README.md` & `MIGRATION_*.md`**
+    *   系统使用说明文档及迁移日志信息，指导架构升级流程与重构状态。
 
 ---
 
 ## 2. RAG (混合检索生成系统) - `app/rag/`
 
-提供系统最底层的“医学知识补全”功能。此模块向大模型输出医学权威上下文。
+提供系统最底层的“医学知识补全”功能，它将本地医学指南书籍进行向量嵌入和实时检索召回：
 
 *   **`data_loader.py`**
-    *   **作用**：文档解析与分块管道管理。
-    *   **核心函数**：
-        *   `load_pdfs_from_dir()`: 扫描并加载文件夹内的 PDF 内容。
-        *   `clean_text()`, `split_documents()`: 数据预处理清洗，基于长度和符号对原始文本进行精细的 Chunk 分割。
+    *   **作用**：文档解析与分块管道。扫描指定目录的 PDF，将其智能切割成合适长度的 Chunk 纯文本片段以备处理。
 *   **`qa_generator.py`**
-    *   **作用**：调用 LLM 实现文档纯文本块的逆向提问提取。
-    *   **核心类**：`QAGenerator`
-        *   **核心方法** `generate_qa_for_chunks()`: 批量向大模型请求生成 QA 对，与原文本一并建立双视角检索索引。
+    *   **作用**：数据蒸馏拓展。调用 Qwen大模型对原本“稀疏文本”的内容预先批量化生成问答对（QA Pairs），增强医学术语检索的召回率。
 *   **`retrievers.py`**
-    *   **作用**：定义向量化模型、混合检索引擎及重排逻辑。
-    *   **核心类/函数**：
-        *   `DashScopeEmbeddings`: 封装阿里云文本嵌入 API，提供 `embed_documents` 与 `embed_query`。
-        *   `BGEReranker`: 二次精排模型，`rerank()` 将召回候选集二次打分提纯。
-        *   `HybridRetriever`: `search()` 综合融合了基于关键词的 BM25 和基于向量比对的过滤检索机制。
-        *   `UnifiedSearchEngine`: 面向业务封装的高度集成接口。
-    *   **模块联系**：此模块的数据流入大模型上下文（供给给 `retrieve_node.py`或`MedicalReActAgent`作为循证支持）。
+    *   **作用**：混合检索引擎核心（`UnifiedSearchEngine`）。内含双路召回（BM25 关键词匹配 + 向量嵌入搜索 DashScope Text Embedding），且接入了 `gte-rerank` 进行深度分数重排获取精简的 Top-K 知识条目。
+*   **`retrieve.py`**
+    *   **作用**：旧版本的单体化检索执行工具（兼容类过渡方案）。
 
 ---
 
 ## 3. Agents 多智能体决策层 - `app/agents/`
 
-这是采用 LangGraph 构建的高维认知推理中枢系统。
+采用 LangGraph 状态机编排模式与 Agentic RAG 思路构建临床辅助系统：
 
 *   **`orchestrators/` (核心决策编排网络)**
-    *   **`clinical_graph.py`**:
-        *   **核心类**：`ClinicalGraphBuilder` 
-        *   **作用**：利用 `build()` 组装 LangGraph 图机制；`_route_intent()` 动态路由患者病情的节点走向。
-    *   **`qwen_agent.py`**: 
-        *   **核心类**：`QwenAgent`。封装 LangGraph 事件解析的方法，如 `_translate_event()` 流水转换机制和输出 `_parse_json()`。
-    *   **`nodes/` (行为节点)**: 相互串发、接驳完成一套复杂的看诊流水线。
-        *   `intent_node.py` (`IntentNode`): 首道大门，负责区分（咨询/闲聊百科/非脑卒中拒答）。
-        *   `analysis_node.py` (`AnalysisNode`): 病例结构化专家，自动提取“现病史、既往史”，剥离“治疗”还是“诊断”微目标。
-        *   `retrieve_node.py` (`RetrieveNode`): 接力器，发起 RAG 质询。
-        *   `reason_node.py` (`ReasonNode`): Proposer-Critic(提议-批判) 模拟会诊，内部互相打架验证医疗安全。
-        *   `report_node.py` (`ReportNode`): 最终排版并执行临床意见输出。
-
-*   **`qwen/` (独立专业大语言模型层)**
-    *   **`medical_agent.py`** (`MedicalReActAgent`):
-        *   **作用核心方法**：`run()`, `fast_retrieve()`, `_synthesize_evidence()`。用于单独承接医疗术语推断处理的小型闭环环境。
-
+    *   **`clinical_graph.py`**: 基于状态机的图推理引擎，把临床询问定义成多个互相校验的节点工作流。
+    *   **`nodes/*.py`** (如 `intent_node.py`, `analysis_node.py`, `reason_node.py`): LangGraph 的各个功能节点处理器（意图识别判定、结构化病情拆解、证据批判推理与报告合并等）。
+    *   **`qwen_agent.py`**: 基于 Qwen 模型旧版主架构文件或特定场景推理逻辑封装编排。
+*   **`qwen/` (Qwen 专业模型适配)**
+    *   **`medical_agent.py`**: 新版医疗 Qwen-Turbo 专精大模型智能体引擎类，封装推理对话执行和报告调配。
 *   **`bailian/`**
-    *   **`health_risk_analyzer.py`**: 调用阿里云百炼大模型进行即态健康风险评测分析（极速版）。
-
-*   **`pipelines/` (管道式执行器)**
-    *   **`rag_pipeline.py`** (`RAGPipeline.run()`): 标准化串行控制。
+    *   **`health_risk_analyzer.py`**: 调用阿里云大模型环境进行极速健康风险评测的轻量级 Agent。
+*   **`pipelines/` & `services/` & `schemas/`**
+    *   **`rag_pipeline.py` / `retrieval_service.py` / `query_service.py`**: 实现从“用户原始问句 -> 检索优化问句 -> 统一 RAG 派发查询”的微任务流水线。
+    *    **`core/` & `utils/` (Agent 层配套)**
+        *   **`result.py`, `schema.py`, `exceptions.py`**: 智能体通讯中的异常捕捉规范及输入输出格式合法性检查。
+        *   **`json_parser.py`, `llm_helper.py`, `retry.py`**: 确保模型输出 JSON 稳定性及 API 防抖重试底座。
+    *   **`infra/base_reranker.py`**: 定义大模型外接独立重排基类依赖。
 
 ---
 
-## 4. 全局辅助工具与第三方整合服务
+## 4. 全局辅助工具与第三方整合
 
 *   **`app/services/` (外部数据接驳)**
-    *   **`pubmed_service.py`** (`PubMedService`):
-        *   **方法**：`_common_params()`, `_parse_article()`, `_evidence_rank()` 分布执行查询组装、XML抽提以及论文权威性影响因子粗排，获取全球临床论文库支持。
+    *   **`pubmed_service.py`**: 封装请求 PubMed API 进行海外权威医学论文数据库查阅支持的功能。
+    *   **`vision_service.py`**: 基于多模态大模型的检验影像/图片报告等视觉识别理解接口支持。
+    
 *   **`app/config/` (中央配置库)**
-    *   **`config_loader.py`**:
-        *   `PromptManager` / `ReportTemplateManager`: 各自拥有 `get()`, `reload()`, `get_template()`方法，实现大段 Prompt 文字和 Markdown 报告渲染模板的内存预载与变量替代管理。避免了修改文案又要重启代码的麻烦。
-*   **`app/utils/` (公共函数安全与限流)**
-    *   `error_codes.py` (统一错误处理映射)。
-    *   `context_summary.py` (包含上下文截断滑动窗，防 Token 超限)。
+    *   **`config_loader.py`**: `ConfigManager` 读取 YAML 和 Env 等环境应用信息。
+    *   **`prompts.yaml` & `report_templates.yaml`**: 将长串的角色设定 prompt 与前端模板独立，脱离硬编码，便于迭代微调。
+    
+*   **`app/utils/` (公共函数)**
+    *   **`error_codes.py`**: 前后端错误抛出状态码格式化对照。
+    *   **`context_summary.py`**: 上下文滑动窗截断和 Token 摘要瘦身过滤。
 
 ---
 
-## 5. 常量数据集与产出目录（纯文件落盘区）
+## 5. 常量数据集与产出目录
 
-*   **`Data/documents/`**: PDF 原始文献资源池。
-*   **`app/chroma_db_unified/`**: 引擎底座持久化的向量特征数据库。
-*   **`data_exports/`**: 埋点生成的交互记录 CSV 文件。
+*   **`Data/documents/`**: 静态文件池，预置存储了多份《急性缺血性脑卒中管理指南》等权威临床资料 PDF 原文。
+*   **`app/chroma_db_unified/`**: ChromaDB 本地化数据卷文件夹（SQL 与向量索引存储于此，保证离线召回能力）。
+*   **`data_exports/`**: 业务运行状态下各类缓存（例如 `medical_agent_eval_details.csv`）落盘文件。
 
 ---
 
 ## 6. 测试与科学评估体系
 
-*   **`tests/`**: 用于测试核心微服务与验证（如 `test_rag.py` 单测 RAG 的切片分型；`test_api_client.py` 模拟前端 HTTP 访问联通性能）。
-*   **`evaluation/`**: 自动化打分脚手架跑批模块脚本，用于医学常识标准集下，测试模型的幻觉程度。
+*   **`tests/` (功能与接口联调测试)**
+    *   **`test_rag.py` / `run_search.py`**: 从底层直接跑通文本切割到 QA 切片再到文档召回的“搜集”阶段单元测试。
+    *   **`test_api_client.py`**: 完整前端 HTTP 会话模拟脚本验证。用于检查 API `/ai/analyze` 与鉴权加密。
+    *   **`test_new_architecture.py`**: 全链路针对图编排等新功能的系统级冒烟集成测试。
+    
+*   **`evaluation/` (客观质量评估)**
+    *   **`getTestData.py`**: 根据指定标注集自动爬取或跑批回看 AI 返回性能。
+    *   **`expand_contexts_resume.py`**: 基于 Ragas 等自动化评测框架进行答案“幻觉率”和“准确率”评估与打分断点续传。
+

@@ -46,7 +46,7 @@ def test_get_result_stream():
     
     url = f"{BASE_URL}/model/get_result"
     payload = {
-        "question": "对于发病4.5小时内的急性缺血性卒中患者，如果既往有颅内出血史或者正在服用直接口服抗凝药（DOACs），在什么情况下可以考虑或者绝对禁止静脉溶栓治疗？需要参考哪些具体的化验或影像学指标？",
+        "question": "对于发病4.5小时内的急性缺血性卒中患者，如果既往有颅内出血史或者正在服用直接口服抗凝药（DOACs），该怎么办？",
         "round": 1,
         "all_info": "",
         "token": generate_test_token(),

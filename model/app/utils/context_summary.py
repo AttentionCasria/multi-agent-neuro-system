@@ -152,17 +152,31 @@ class ConversationSummaryService:
             parts = [p for p in [previous_all_info.strip(), f"本轮问题：{question.strip()}", f"本轮结论：{answer.strip()}"] if p]
             return "\n".join(parts).strip()
 
-    def update_all_info(self, previous_all_info: str, question: str, answer: str, threshold: float = 0.4):
-        score, reason = self.score_turn_value(question, answer, previous_all_info)
-        is_valuable = score > threshold
-        updated_all_info = previous_all_info.strip()
-
-        if is_valuable:
+    def update_all_info(self, previous_all_info: str, question: str, answer: str, threshold: float = 2000):
+        # 兼容旧代码调用 (如果传入的是旧的分数阈值 0.4，则覆盖为长度阈值 2000)
+        if threshold < 2.0:
+            threshold = 2000
+            
+        previous_all_info = previous_all_info.strip()
+        current_len = len(previous_all_info) + len(question) + len(answer)
+        
+        # 只有当累计长度超过阈值（如2000字）时，才触发一次背景归纳清洗
+        is_triggered = current_len > threshold
+        
+        if is_triggered:
+            logger.info(f"触发滑动窗口摘要 (当前长度 {current_len} > {threshold})")
             updated_all_info = self.summarize_context(previous_all_info, question, answer)
+        else:
+            logger.info(f"滑动窗口直连 (当前长度 {current_len} <= {threshold})")
+            new_turn = f"问：{question.strip()}\n答：{answer.strip()}"
+            if previous_all_info:
+                updated_all_info = f"{previous_all_info}\n\n{new_turn}"
+            else:
+                updated_all_info = new_turn
 
         return {
-            "score": score,
-            "reason": reason,
-            "is_valuable": is_valuable,
+            "score": 1.0 if is_triggered else 0.0,
+            "reason": "sliding_window_trigger" if is_triggered else "append_only",
+            "is_valuable": is_triggered,
             "updated_all_info": updated_all_info
         }

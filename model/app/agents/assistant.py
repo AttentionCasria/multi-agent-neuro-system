@@ -4,7 +4,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, AsyncGenerator, Dict
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from app.agents.qwen.medical_agent import MedicalReActAgent
 from app.config.config_loader import PromptManager, ReportTemplateManager
 from app.agents.services.query_service import QueryGenerationService
 from app.agents.services.retrieval_service import EvidenceRetrievalService
@@ -46,81 +45,24 @@ class MedicalAssistant:
         synthesis = EvidenceSynthesisService(llm_fast, prompt_manager)
         self.rag_pipeline = RAGPipeline(query_gen, retrieval, synthesis)
 
-        # 保留原有的 MedicalReActAgent 以兼容快速检索
-        self.agent = MedicalReActAgent(
-            llm_main=self.llm,
-            llm_fast=self.llm_fast,
-            retriever=self.retriever,
-            prompt_manager=self.prompts
-        )
+        logger.info("✅ MedicalAssistant（重构版）初始化完成，完全解耦")
 
-        logger.info("✅ MedicalAssistant（重构版）初始化完成")
-
-    def fast_parallel_retrieve(self, sub_questions: List[str]) -> str:
-        """快速并行检索（保留原有接口）"""
+    async def afast_parallel_retrieve(self, sub_questions: List[str]) -> str:
+        """异步快速并行检索（原生异步方案）"""
         if not sub_questions:
             return ""
 
-        logger.info(f"🔍 快速并行检索 {len(sub_questions)} 个子问题...")
+        logger.info(f"🔍 异步快速并行检索 {len(sub_questions)} 个子问题...")
 
-        results = {}
-        worker_count = min(len(sub_questions), 3)
+        # 采用原生 asyncio 控制并发并发起检索
+        raw_evidence = await self.rag_pipeline.retrieval.aparallel_retrieve(sub_questions)
 
-        with ThreadPoolExecutor(max_workers=worker_count) as executor:
-            future_map = {
-                executor.submit(self.agent.fast_retrieve, q): q
-                for q in sub_questions
-            }
-
-            for future in as_completed(future_map):
-                q = future_map[future]
-                try:
-                    results[q] = future.result()
-                except Exception as e:
-                    logger.error(f"子问题检索失败: {q} | {e}")
-                    results[q] = ""
-
-        parts = []
-        for i, q in enumerate(sub_questions):
-            r = results.get(q, "")
-            if r:
-                if len(r) > MAX_EVIDENCE_PER_QUESTION:
-                    r = r[:MAX_EVIDENCE_PER_QUESTION] + "... [已截断]"
-                parts.append(f"### 检索维度{i+1}: {q}\n{r}")
-
-        combined = "\n\n---\n\n".join(parts)
-        logger.info(f"🔍 检索完成，总长度: {len(combined)} 字符")
-        return combined
-
-    def parallel_retrieve_and_synthesize(
-        self, sub_questions: List[str]
-    ) -> str:
-        """并行检索并合成（保留原有接口）"""
-        if not sub_questions:
-            return ""
-
-        results = {}
-        worker_count = min(len(sub_questions), 3)
-
-        with ThreadPoolExecutor(max_workers=worker_count) as executor:
-            future_map = {
-                executor.submit(self.agent.run, q): q
-                for q in sub_questions
-            }
-            for future in as_completed(future_map):
-                q = future_map[future]
-                try:
-                    results[q] = future.result()
-                except Exception as e:
-                    logger.error(f"子问题检索失败: {q} | {e}")
-                    results[q] = "未检索到直接证据"
-
-        parts = []
-        for i, q in enumerate(sub_questions):
-            parts.append(
-                f"### 检索维度{i+1}: {q}\n{results.get(q, '未检索到')}"
-            )
-        return "\n\n---\n\n".join(parts)
+        # fast_parallel_retrieve 的截断逻辑和分段已经在 retrieval service 做了一部分，
+        # 我们再重新套用截断保证安全。 (原代码在拼接前做了截断)
+        # 现在我们可以依赖 RetrievalService 的结果，只是如果有过长文本我们需要做控制。
+        # 简化处理：返回内容通过 retrieve_node.py 里的统一 truncate_text 截断
+        logger.info(f"🔍 检索完成，总长度: {len(raw_evidence)} 字符")
+        return raw_evidence
 
     async def stream_fast_response(
         self, case_text: str, evidence: str = ""

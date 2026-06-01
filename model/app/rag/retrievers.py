@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 CONFIG = {
     "persist_dir": os.path.join(os.path.dirname(os.path.dirname(__file__)), "chroma_db_unified"),
-    "docs_dir": os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "Data", "documents"),
+    "docs_dir": os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "documents"),
     "top_k_per_store": 4,
     "enable_qa_generation": True,
 }
@@ -208,7 +208,7 @@ class UnifiedSearchEngine:
         self.docs_dir = (
                 docs_dir
                 or os.getenv("MEDICAL_DOCS_DIR")
-                or CONFIG.get("docs_dir", "./Data/documents")
+                or CONFIG.get("docs_dir", "./data/documents")
         )
         logger.info(f"📂 文档目录: {self.docs_dir}")
 
