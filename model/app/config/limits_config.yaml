@@ -1,0 +1,43 @@
+limits:
+  max_sub_questions: 3
+  max_evidence_chars: 2000
+  max_evidence_per_question: 600
+  max_proposal_chars: 3000
+  max_critique_chars: 3000
+keywords:
+  diagnostic:
+  - TOAST
+  - 分型
+  - 病因
+  - 定位
+  - 定性
+  - 鉴别
+  - 卒中类型
+  - 发病机制
+  - 卒中原因
+  treatment:
+  - 溶栓
+  - 取栓
+  - 抗凝
+  - 降压
+  - 手术
+  - 时间窗
+  - 剂量
+  - 适应证
+  - 禁忌
+  prognosis:
+  - 预后
+  - 复发
+  - 康复
+  - 二级预防
+  - 随访
+  - 致残
+  - 死亡率
+intent_classification:
+  categories:
+  - name: consultation
+    description: 具体患者问诊或病例分析
+  - name: knowledge
+    description: 脑卒中通用知识询问
+  - name: irrelevant
+    description: 非脑卒中医疗相关

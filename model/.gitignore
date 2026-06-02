@@ -18,6 +18,7 @@ env/
 # 包含大量的 embedding 二进制文件，绝对不能上传
 chroma_db_bge/
 chroma_db/
+chroma_db_unified/
 vector_store/
 
 # --- 数据文件 ---

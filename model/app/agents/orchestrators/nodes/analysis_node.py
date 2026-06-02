@@ -16,19 +16,19 @@ class AnalysisNode(BaseNode):
         self.llm = llm
 
     async def run(self, state: ClinicalState) -> Dict:
-        analysis = await self._unified_analysis(state.case_text, state.all_info)
+        analysis = await self._unified_analysis(state["case_text"], state["all_info"])
         clinical_questions = analysis.get("clinical_questions", ["该患者当前最紧急的临床问题和处置要点"])
 
         # 诊断相关关键词过滤
         _DIAGNOSTIC_KW = {"TOAST", "分型", "病因", "定位", "定性", "鉴别", "卒中类型", "发病机制", "卒中原因"}
         _TREATMENT_KW = {"溶栓", "取栓", "抗凝", "降压", "手术", "时间窗", "剂量", "适应证", "禁忌"}
-        if any(kw in state.case_text for kw in _DIAGNOSTIC_KW):
+        if any(kw in state["case_text"] for kw in _DIAGNOSTIC_KW):
             filtered = [q for q in clinical_questions if not any(kw in q for kw in _TREATMENT_KW)]
             if filtered:
                 clinical_questions = filtered
 
         return {
-            "context": analysis.get("structured_context", {"原始病例": state.case_text}),
+            "context": analysis.get("structured_context", {"原始病例": state["case_text"]}),
             "clinical_questions": clinical_questions[:MAX_SUB_QUESTIONS],
             "key_risks": analysis.get("key_risks", []),
             "complexity": analysis.get("complexity", "high"),

@@ -73,15 +73,22 @@ class BGEReranker:
     def __init__(self, top_k: int = 5):
         self.api_key = os.getenv("DASHSCOPE_API_KEY")
         if not self.api_key:
-            logger.warning("⚠️ 未找到 DASHSCOPE_API_KEY，Rerank 可能失效")
+            logger.warning("⚠️ 未找到 DASHSCOPE_API_KEY，Rerank 功能已禁用")
         self.top_k = top_k
         self.model = "gte-rerank"
+        self.enabled = bool(self.api_key)  # 根据API密钥是否存在决定是否启用
 
     def rerank(self, query: str, docs: List[Document], top_k: int = None) -> List[Document]:
         if not docs:
             return []
         
         actual_top_k = top_k if top_k is not None else self.top_k
+        
+        # 如果Rerank未启用或API密钥无效，直接返回原始结果
+        if not self.enabled:
+            logger.info(f"ℹ️  Rerank 功能已禁用，直接返回原始结果")
+            return docs[:actual_top_k]
+        
         try:
             doc_contents = [doc.page_content for doc in docs]
             resp = dashscope.TextReRank.call(
@@ -101,10 +108,10 @@ class BGEReranker:
                 logger.info(f"✅ Rerank 完成，{len(docs)} → {len(reranked)} 条")
                 return reranked
             else:
-                logger.error(f"❌ Rerank API 失败: {resp.code} - {resp.message}")
+                logger.warning(f"⚠️  Rerank API 失败 ({resp.code}): {resp.message}，使用原始结果")
                 return docs[:actual_top_k]
         except Exception as e:
-            logger.error(f"❌ Rerank 异常: {e}")
+            logger.warning(f"⚠️  Rerank 异常: {type(e).__name__} - {str(e)}，使用原始结果")
             return docs[:actual_top_k]
 
 

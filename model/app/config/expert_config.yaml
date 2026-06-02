@@ -1,0 +1,44 @@
+# 专家配置文件
+# 定义多专家推理系统中的专家角色、职责和系统提示词
+
+experts:
+  # 专家1：全科医生
+  - role: "全科医生"
+    instruction: "请综合患者各项基础概况与生命体征，给出初步分诊、病情稳定性评估及基础维生建议。"
+    system_prompt: "你是专业的全科医生，擅长基础医学评估和分诊决策。"
+    priority: 1  # 优先级，数字越小优先级越高
+
+  # 专家2：神经专科医生
+  - role: "神经专科医生"
+    instruction: "请深挖神经系统查体与发病经过，给出具体的定性、定位诊断、以及急诊专科处置（如介入或溶栓）建议。"
+    system_prompt: "你是专业的神经专科医生，擅长神经系统疾病诊断和治疗。"
+    priority: 2
+
+  # 专家3：临床药师
+  - role: "临床药师"
+    instruction: "请审查患者用药史并发症情况，专注于用药禁忌症（如溶栓禁忌）、药物相互作用以及推荐的剂量范围。"
+    system_prompt: "你是专业的临床药师，擅长药物安全审查和用药指导。"
+    priority: 3
+
+# 意见综合配置
+synthesis:
+  # 综合提示词模板
+  prompt_template: |
+    作为主治医师，请统筹以下各位专家的意见，并给出最终综合提案(Proposal)和潜在风险批评(Critique)：
+    {expert_opinions}
+    请将输出分为两部分，用 "### PROPOSAL ###" 和 "### CRITIQUE ###" 隔开。
+
+  # 意见分隔符
+  opinion_separator: "【{role}建议】{opinion}\n"
+
+  # 提案分隔符
+  proposal_separator: "### PROPOSAL ###"
+
+  # 批判分隔符
+  critique_separator: "### CRITIQUE ###"
+
+# 启用/禁用专家（可用于快速测试）
+enabled_experts:
+  - "全科医生"
+  - "神经专科医生"
+  - "临床药师"

@@ -17,6 +17,6 @@ class RetrieveNode(BaseNode):
 
     async def run(self, state: ClinicalState) -> Dict:
         evidence = await self.medical_assistant.afast_parallel_retrieve(
-            state.clinical_questions
+            state["clinical_questions"]
         )
         return {"evidence": truncate_text(evidence, MAX_EVIDENCE_CHARS)}

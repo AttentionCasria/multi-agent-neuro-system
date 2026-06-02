@@ -47,20 +47,33 @@ class PubMedService:
         years: int = 3,
     ) -> List[Dict[str, Any]]:
         try:
+            logger.info(f"开始PubMed检索: query={query}, max_results={max_results}, years={years}")
+            
             pmids = await self._esearch(
                 query, retmax=max_results * 3, reldays=years * 365
             )
+            
             if not pmids:
                 logger.info(f"PubMed 无结果: query={query!r}")
                 return []
 
+            logger.info(f"PubMed 找到 {len(pmids)} 篇文献，开始获取详细信息")
+            
             papers = await self._efetch(pmids[:15])
 
             papers.sort(key=lambda p: self._evidence_rank(p.get("pub_type", [])))
+            
+            logger.info(f"PubMed 检索完成: 返回 {len(papers[:max_results])} 篇文献")
             return papers[:max_results]
 
+        except httpx.HTTPStatusError as e:
+            logger.error(f"PubMed HTTP错误: {e.response.status_code} - {e.response.text}")
+            return []
+        except httpx.TimeoutException:
+            logger.error(f"PubMed 请求超时")
+            return []
         except Exception as e:
-            logger.error(f"PubMed 检索异常: {e}")
+            logger.error(f"PubMed 检索异常: {type(e).__name__} - {str(e)}")
             return []
 
     async def _esearch(self, query: str, retmax: int, reldays: int) -> List[str]:

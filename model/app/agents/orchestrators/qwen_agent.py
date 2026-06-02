@@ -9,6 +9,7 @@ from app.agents.orchestrators.nodes.intent_node import IntentNode
 from app.agents.orchestrators.nodes.analysis_node import AnalysisNode
 from app.agents.orchestrators.nodes.retrieve_node import RetrieveNode
 from app.agents.orchestrators.nodes.reason_node import ReasonNode
+from app.agents.orchestrators.nodes.validate_node import ValidateNode
 from app.agents.orchestrators.nodes.report_node import ReportNode
 from app.utils.error_codes import build_error_event, format_error_log
 
@@ -20,7 +21,8 @@ _NODE_LABELS: Dict[str, str] = {
     "analysis": "正在分析病例结构...",
     "retrieve": "正在检索循证医学证据...",
     "reason": "正在进行临床推理...",
-    "report": "正在生成临床报告...",
+    "validate": "正在进行校验反思...",
+    "generate_report": "正在生成临床报告...",
     "knowledge_answer": "正在回答知识问题...",
 }
 
@@ -50,7 +52,8 @@ class QwenAgent:
         self.intent_node = IntentNode(self.llm_turbo)
         self.analysis_node = AnalysisNode(self.llm_critic)
         self.retrieve_node = RetrieveNode(medical_assistant)
-        self.reason_node = ReasonNode(self)
+        self.reason_node = ReasonNode(self.llm_proposer)  # 修复：传递LLM对象而不是QwenAgent对象
+        self.validate_node = ValidateNode(self.llm_critic)  # 添加校验节点
         self.report_node = ReportNode(self.llm_proposer, report_manager)
 
         # 构建图
@@ -59,6 +62,7 @@ class QwenAgent:
             analysis_node=self.analysis_node,
             retrieve_node=self.retrieve_node,
             reason_node=self.reason_node,
+            validate_node=self.validate_node,  # 传递校验节点
             report_node=self.report_node,
             llm_critic=self.llm_critic,
             report_manager=self.reports,
@@ -76,11 +80,35 @@ class QwenAgent:
             "case_text": case_text,
             "all_info": all_info,
             "report_mode": report_mode,
+            "intent_type": "",
+            "context": {},
+            "clinical_questions": [],
+            "key_risks": [],
+            "complexity": "high",
+            "evidence": "",
+            "proposal": "",
+            "critique": "",
+            "user_questions": [],
+            "report": "",
+            "generalist_advice": "",
+            "specialist_advice": "",
+            "pharmacist_advice": "",
+            "validation_passed": True,
+            "validation_feedback": "",
+            "reflection_count": 0
         }
         streamed_nodes: set = set()
 
         try:
-            async for event in self.graph.astream_events(initial_state, version="v2"):
+            # 为每次请求生成唯一的thread_id
+            import uuid
+            config = {
+                "configurable": {
+                    "thread_id": uuid.uuid4().hex
+                }
+            }
+            
+            async for event in self.graph.astream_events(initial_state, config=config, version="v2"):
                 if (event.get("event") == "on_chat_model_stream"
                         and event.get("metadata", {}).get("langgraph_node", "")
                         in self._STREAMING_NODES):
@@ -108,18 +136,28 @@ class QwenAgent:
         meta = event.get("metadata", {})
         langgraph_node = meta.get("langgraph_node", "")
 
+        logger.info(f"[event] 事件类型: {evt}, 节点名称: {name}, langgraph_node: {langgraph_node}")
+
         if evt == "on_chain_start" and name in _NODE_LABELS and show_thinking:
             return {"type": "node_start", "node": name, "label": _NODE_LABELS[name]}
 
         if evt == "on_chain_end" and name in _NODE_LABELS:
             output = event.get("data", {}).get("output", {})
             report_text = output.get("report", "") if isinstance(output, dict) else ""
+            
+            logger.info(f"[event] 节点 {name} 完成，输出类型: {type(output)}")
+            if isinstance(output, dict):
+                logger.info(f"[event] 节点 {name} 输出键: {list(output.keys())}")
+                if "report" in output:
+                    logger.info(f"[event] 节点 {name} 报告长度: {len(output['report'])}")
 
             if name == "reject":
                 return {"type": "token", "content": report_text} if report_text else None
 
             if name in self._STREAMING_NODES and name not in streamed_nodes:
                 if report_text:
+                    logger.info(f"[event] 节点 {name} 输出报告内容，长度: {len(report_text)}")
+                    streamed_nodes.add(name)
                     return {"type": "token", "content": report_text}
 
             if show_thinking:
@@ -147,6 +185,11 @@ class QwenAgent:
             return f"检索到 {count} 个证据片段"
         if node == "reason":
             return "Proposer + Critic 推理完成"
+        if node == "validate":
+            return "校验反思完成"
+        if node == "generate_report":
+            report = output.get("report", "")
+            return f"生成报告，长度: {len(report)} 字符"
         return ""
 
     # 保留原有的方法以兼容现有代码
