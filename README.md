@@ -1,4 +1,4 @@
-# 🧠 MedLLM / NeuroMultiAgentSystem
+# 🧠 MedLLM / MultiAgentNeuroSystem
 
 > **多智能体深度检索脑卒中临床辅助决策支持系统 (CDSS)**
 > 本项目是一套专为脑卒中（Stroke）临床场景打造的智能医疗辅助决策系统。系统以权威医学文献与临床指南为知识底座，融合 **Hybrid RAG（混合检索增强生成）**、**LangGraph 多智能体协同推理**与**全栈响应式高并发全链路流式架构**，实现了从患者病例输入到“证据先行、过程透明、结果合规”的完整决策闭环。
