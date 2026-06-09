@@ -1,6 +1,7 @@
 import os
 import jwt
 import json
+import time
 import requests
 from dotenv import load_dotenv
 
@@ -178,6 +179,32 @@ def test_pubmed_search():
             print(f"❌ 请求失败，状态码: {response.status_code}, {response.text}")
     except Exception as e:
         print(f"⚠️ 请求异常: {e}")
+
+def test_quick_analyze():
+    """测试 /ai/quick-analyze 接口（快速AI意见）"""
+    print("\n" + "="*50)
+    print("⚡ 测试 [快速AI意见] /ai/quick-analyze")
+    print("="*50)
+    
+    url = f"{BASE_URL}/ai/quick-analyze"
+    payload = {
+        "question": "患者术后次日复查头颅CT显示梗死灶内出现点状高密度影，无占位效应，患者症状稳定。这最可能是什么？是否需要特殊处理？",
+        "token": generate_test_token()
+    }
+    
+    try:
+        start_time = time.time()
+        response = requests.post(url, json=payload)
+        elapsed_time = time.time() - start_time
+        
+        if response.status_code == 200:
+            print(f"✅ 请求成功！耗时: {elapsed_time:.2f}秒")
+            print("返回结果：")
+            print(json.dumps(response.json(), indent=2, ensure_ascii=False))
+        else:
+            print(f"❌ 请求失败，状态码: {response.status_code}, {response.text}")
+    except Exception as e:
+        print(f"⚠️ 请求异常: {e}\n(请确保您的服务器在运行中)")
 
 if __name__ == "__main__":
     print("🔔 运行测试前，请确保主服务已经在另一个终端中通过 `python main.py` 启动工作，监听 8000 端口。")
